@@ -1,0 +1,54 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<style>
+  .wr-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  .wr-card { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 1rem 1.25rem; }
+  .wr-card.killed { border-color: #c0392b; background: #fff7f6; }
+  .wr-h { font-weight: 600; font-size: 1.05rem; margin-bottom: 0.25rem; }
+  .wr-stat { display: flex; justify-content: space-between; padding: 0.15rem 0; color: #444; }
+  .wr-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
+  .wr-ok { background: #e1f5e1; color: #1e7d2c; }
+  .wr-bad { background: #fde2e2; color: #b8323a; }
+  .wr-actions { margin-top: 0.75rem; }
+  .wr-btn { display: inline-block; padding: 0.4rem 0.8rem; border-radius: 6px; text-decoration: none; font-size: 0.9rem; }
+  .wr-btn.engage { background: #c0392b; color: #fff; }
+  .wr-btn.release { background: #2c8c39; color: #fff; }
+  .wr-empty { color: #888; padding: 2rem; text-align: center; border: 1px dashed #ccc; border-radius: 8px; }
+</style>
+
+<h1>{{ title }}</h1>
+
+{% if rooms %}
+<div class="wr-grid">
+  {% for r in rooms %}
+  <div class="wr-card{% if r.killed %} killed{% endif %}">
+    <div class="wr-h">{{ r.name }}</div>
+    <div class="wr-stat"><span>Queue size</span><b>{{ r.queue_size }}</b></div>
+    <div class="wr-stat"><span>Admitted</span><b>{{ r.admitted }} / {{ r.capacity }}</b></div>
+    <div class="wr-stat">
+      <span>Kill switch</span>
+      <span class="wr-pill {% if r.killed %}wr-bad{% else %}wr-ok{% endif %}">
+        {% if r.killed %}engaged{% else %}released{% endif %}
+      </span>
+    </div>
+    <div class="wr-stat">
+      <span>Backend</span>
+      <span class="wr-pill {% if r.healthy %}wr-ok{% else %}wr-bad{% endif %}">
+        {% if r.healthy %}healthy{% else %}unhealthy{% endif %}
+      </span>
+    </div>
+    <div class="wr-actions">
+      <form action="{{ r.toggle_url }}" method="post" style="display:inline">
+        {% csrf_token %}
+        <button class="wr-btn {% if r.killed %}release{% else %}engage{% endif %}" type="submit">
+          {% if r.killed %}Release kill switch{% else %}Engage kill switch{% endif %}
+        </button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="wr-empty">No waiting rooms configured. Set <code>WAITING_ROOM</code> in settings.</div>
+{% endif %}
+{% endblock %}
