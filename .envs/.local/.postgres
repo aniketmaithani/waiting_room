@@ -1,0 +1,7 @@
+# PostgreSQL
+# ------------------------------------------------------------------------------
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+POSTGRES_DB=waiting_room_django
+POSTGRES_USER=AhklInMFVWFdkvXETexdArGglFopMnfA
+POSTGRES_PASSWORD=sQn7rs5OIGVYr1xao9gA8wc7Mp3cWNThxxhIcnO3KWRWEHoQJquDYtsQJObdJHxF

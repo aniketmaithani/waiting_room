@@ -1,0 +1,17 @@
+services:
+  docs:
+    image: waiting_room_django_local_docs
+    container_name: waiting_room_django_local_docs
+    build:
+      context: .
+      dockerfile: ./compose/local/docs/Dockerfile
+    env_file:
+      - ./.envs/.local/.django
+    volumes:
+      - /app/.venv
+      - ./docs:/docs:z
+      - ./config:/app/config:z
+      - ./waiting_room_django:/app/waiting_room_django:z
+    ports:
+      - '9000:9000'
+    command: /start-docs
