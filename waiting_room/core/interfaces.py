@@ -1,0 +1,173 @@
+"""Pluggable interfaces.
+
+Each ABC defines one extension point. Concrete implementations live next to
+the interface they implement (e.g. ``storage.redis_backend.RedisStorageBackend``).
+The core ``WaitingRoom`` engine depends only on these abstractions.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from waiting_room.core._types import (
+        AdmissionTicket,
+        EventType,
+        QueuePosition,
+        Session,
+    )
+
+
+class StorageBackend(ABC):
+    """Persistence + atomic queue operations for a single waiting room.
+
+    Implementations must guarantee that ``admit_batch`` and ``enqueue`` are
+    atomic with respect to each other under concurrent access. The Redis
+    implementation does this through Lua scripts.
+    """
+
+    @abstractmethod
+    def enqueue(self, room: str, session: Session, score: float) -> int:
+        """Insert ``session`` at ``score``. Returns its 1-indexed position."""
+
+    @abstractmethod
+    def position(self, room: str, session_id: str) -> QueuePosition:
+        """Return the session's current position. ``position=-1`` if unknown."""
+
+    @abstractmethod
+    def queue_size(self, room: str) -> int:
+        """Number of sessions currently queued."""
+
+    @abstractmethod
+    def admit_batch(self, room: str, n: int) -> list[Session]:
+        """Atomically pop the ``n`` highest-priority sessions and mark admitted."""
+
+    @abstractmethod
+    def remove(self, room: str, session_id: str) -> bool:
+        """Remove a session from the queue (e.g. abandon). Returns True if removed."""
+
+    @abstractmethod
+    def get_session(self, room: str, session_id: str) -> Session | None:
+        """Return session metadata if it exists in this room."""
+
+    @abstractmethod
+    def update_session(
+        self,
+        room: str,
+        session_id: str,
+        fields: Mapping[str, str],
+    ) -> None:
+        """Patch a session's metadata fields."""
+
+    @abstractmethod
+    def admitted_count(self, room: str) -> int:
+        """Number of currently-admitted sessions (i.e. consuming a capacity slot)."""
+
+    @abstractmethod
+    def release_admission(self, room: str, session_id: str) -> bool:
+        """Free a capacity slot held by an admitted session."""
+
+    @abstractmethod
+    def reclaim_expired(self, room: str, before_ts: float) -> int:
+        """Drop queued/admitted sessions whose deadline has passed. Returns count."""
+
+    @abstractmethod
+    def set_kill_switch(self, room: str, *, engaged: bool) -> None:
+        """Toggle the kill switch. When engaged, the engine refuses new entries."""
+
+    @abstractmethod
+    def is_kill_switch_engaged(self, room: str) -> bool:
+        """Read the current kill-switch state."""
+
+    @abstractmethod
+    def ping(self) -> bool:
+        """Best-effort liveness check for the underlying store."""
+
+
+class TokenSigner(ABC):
+    """Mints and validates short-lived admission tokens."""
+
+    @abstractmethod
+    def issue(
+        self,
+        *,
+        session_id: str,
+        room: str,
+        fingerprint: str,
+        ttl_seconds: int,
+    ) -> AdmissionTicket: ...
+
+    @abstractmethod
+    def verify(self, token: str, *, fingerprint: str) -> AdmissionTicket:
+        """Validate signature, expiry, and fingerprint binding. Raises on failure."""
+
+    @abstractmethod
+    def mark_used(self, token: str) -> bool:
+        """Record single-use redemption. Returns False if already redeemed."""
+
+
+class AdmissionStrategy(ABC):
+    """Decides how many sessions to admit on each tick."""
+
+    @abstractmethod
+    def slots_available(self, *, queue_size: int, admitted: int, capacity: int) -> int:
+        """How many sessions can be admitted right now."""
+
+
+class SessionStore(ABC):
+    """Out-of-band session state (e.g. user attached metadata).
+
+    Many deployments use the same Redis as ``StorageBackend``; this interface
+    exists so a host can plug in a different store (e.g. DynamoDB) for session
+    metadata while keeping the queue in Redis.
+    """
+
+    @abstractmethod
+    def save(self, session: Session, ttl_seconds: int) -> None: ...
+
+    @abstractmethod
+    def load(self, session_id: str) -> Session | None: ...
+
+    @abstractmethod
+    def delete(self, session_id: str) -> None: ...
+
+
+class EventEmitter(ABC):
+    """Fan-out hook for queue lifecycle events."""
+
+    @abstractmethod
+    def emit(self, event: EventType, payload: Mapping[str, object]) -> None: ...
+
+
+class RateLimiter(ABC):
+    """Per-key rate limiter — used to throttle abusive enqueue attempts."""
+
+    @abstractmethod
+    def acquire(self, key: str) -> bool:
+        """Return True if a token is available, False otherwise."""
+
+
+class MetricsRecorder(ABC):
+    """Adapter to a metrics backend (Prometheus, OpenTelemetry, statsd, …)."""
+
+    @abstractmethod
+    def incr(self, name: str, value: float = 1.0, **labels: str) -> None: ...
+
+    @abstractmethod
+    def observe(self, name: str, value: float, **labels: str) -> None: ...
+
+    @abstractmethod
+    def gauge(self, name: str, value: float, **labels: str) -> None: ...
+
+
+__all__ = [
+    "AdmissionStrategy",
+    "EventEmitter",
+    "MetricsRecorder",
+    "RateLimiter",
+    "SessionStore",
+    "StorageBackend",
+    "TokenSigner",
+]
