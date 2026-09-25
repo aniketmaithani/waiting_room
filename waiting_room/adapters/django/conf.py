@@ -102,6 +102,7 @@ def _build_one(name: str, raw: Mapping[str, Any]) -> WaitingRoomConfig:
         failure_mode=_coerce_failure_mode(raw.get("FAILURE_MODE")),
         allowlist_ips=tuple(raw.get("ALLOWLIST_IPS") or ()),
         allowlist_user_ids=tuple(raw.get("ALLOWLIST_USER_IDS") or ()),
+        trusted_proxy_count=int(raw.get("TRUSTED_PROXY_COUNT", 0)),
         bind_fingerprint=bool(raw.get("BIND_FINGERPRINT", True)),
         waiting_page_path=str(raw.get("WAITING_PAGE_PATH", "/_waiting-room/")),
         position_stream_path=str(raw.get("POSITION_STREAM_PATH", "/_waiting-room/position")),

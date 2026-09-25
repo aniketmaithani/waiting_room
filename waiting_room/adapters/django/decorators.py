@@ -43,7 +43,7 @@ def waiting_room_protect(room_name: str = "default") -> Callable[[ViewFn], ViewF
             token = request.COOKIES.get(cookie_name)
 
             if room.is_allowlisted(
-                ip=client_ip(request),
+                ip=client_ip(request, trusted_proxy_count=room.config.trusted_proxy_count),
                 user_id=authenticated_user_id(request),
             ):
                 return view(request, *args, **kwargs)
@@ -52,7 +52,7 @@ def waiting_room_protect(room_name: str = "default") -> Callable[[ViewFn], ViewF
                 try:
                     room.redeem(
                         token,
-                        ip=client_ip(request),
+                        ip=client_ip(request, trusted_proxy_count=room.config.trusted_proxy_count),
                         user_agent=user_agent(request),
                     )
                     return view(request, *args, **kwargs)
@@ -64,7 +64,7 @@ def waiting_room_protect(room_name: str = "default") -> Callable[[ViewFn], ViewF
 
             try:
                 session, _ = room.enqueue(
-                    ip=client_ip(request),
+                    ip=client_ip(request, trusted_proxy_count=room.config.trusted_proxy_count),
                     user_agent=user_agent(request),
                     user_id=authenticated_user_id(request),
                     existing_session_id=request.COOKIES.get(room.config.session_cookie_name),

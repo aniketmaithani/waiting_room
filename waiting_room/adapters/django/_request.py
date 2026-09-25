@@ -2,26 +2,42 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from django.http import HttpRequest
 
 
-def client_ip(request: HttpRequest) -> str:
-    """Resolve the originating client IP, honouring ``X-Forwarded-For``.
+def client_ip(request: HttpRequest, *, trusted_proxy_count: int = 0) -> str:
+    """Resolve the originating client IP.
 
-    The library trusts the leftmost X-F-F entry. Hosts behind a proxy without
-    IP rewriting should clear the header before it reaches Django.
+    ``X-Forwarded-For`` is only honoured when ``trusted_proxy_count`` > 0. Each
+    trusted proxy appends the address it received the request from, so the
+    client is the entry ``trusted_proxy_count`` hops from the right; anything
+    further left was supplied by the client and cannot be trusted.
     """
-    xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
-    if xff:
-        return xff.split(",", 1)[0].strip()
-    return request.META.get("REMOTE_ADDR", "") or ""
+    remote = str(request.META.get("REMOTE_ADDR", "") or "")
+    if trusted_proxy_count > 0:
+        hops = [h.strip() for h in str(request.META.get("HTTP_X_FORWARDED_FOR", "")).split(",")]
+        hops = [h for h in hops if h]
+        if hops:
+            candidate = hops[-trusted_proxy_count] if len(hops) >= trusted_proxy_count else hops[0]
+            if _is_ip(candidate):
+                return candidate
+    return remote if _is_ip(remote) else ""
+
+
+def _is_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
 
 
 def user_agent(request: HttpRequest) -> str:
-    return request.META.get("HTTP_USER_AGENT", "") or ""
+    return str(request.META.get("HTTP_USER_AGENT", "") or "")
 
 
 def authenticated_user_id(request: HttpRequest) -> str | None:

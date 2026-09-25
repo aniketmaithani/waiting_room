@@ -99,7 +99,7 @@ class WaitingRoomMiddleware:
 
     def _is_allowlisted(self, request: HttpRequest, room: WaitingRoom) -> bool:
         return room.is_allowlisted(
-            ip=client_ip(request),
+            ip=client_ip(request, trusted_proxy_count=room.config.trusted_proxy_count),
             user_id=authenticated_user_id(request),
         )
 
@@ -109,7 +109,11 @@ class WaitingRoomMiddleware:
         if not token:
             return False
         try:
-            room.redeem(token, ip=client_ip(request), user_agent=user_agent(request))
+            room.redeem(
+                token,
+                ip=client_ip(request, trusted_proxy_count=room.config.trusted_proxy_count),
+                user_agent=user_agent(request),
+            )
         except InvalidTokenError:
             return False
         except BackendUnavailableError:
@@ -125,7 +129,7 @@ class WaitingRoomMiddleware:
         cookie_name = room.config.session_cookie_name
         existing = request.COOKIES.get(cookie_name)
         session, _snap = room.enqueue(
-            ip=client_ip(request),
+            ip=client_ip(request, trusted_proxy_count=room.config.trusted_proxy_count),
             user_agent=user_agent(request),
             user_id=authenticated_user_id(request),
             existing_session_id=existing,

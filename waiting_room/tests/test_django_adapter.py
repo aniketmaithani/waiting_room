@@ -112,3 +112,12 @@ def test_rate_limited_client_gets_429(wired_room: WaitingRoom, client: Client) -
 class _Deny:
     def acquire(self, key: str) -> bool:
         return False
+
+
+def test_spoofed_forwarded_for_does_not_bypass_allowlist(
+    wired_room: WaitingRoom,
+    client: Client,
+) -> None:
+    wired_room.config.allowlist_ips = ("10.0.0.5",)
+    r = client.get("/checkout/", HTTP_X_FORWARDED_FOR="10.0.0.5")
+    assert r.status_code == 302

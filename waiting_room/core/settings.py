@@ -132,6 +132,14 @@ class WaitingRoomConfig:
     allowlist_user_ids: tuple[str, ...] = ()
     """User identifiers that bypass the queue (VIP / staff)."""
 
+    trusted_proxy_count: int = 0
+    """Reverse proxies in front of the app that append to ``X-Forwarded-For``.
+
+    ``0`` (default) ignores the header and uses the socket peer address, since
+    any client can send it. Set to the number of proxies you run (e.g. ``1`` for
+    a single load balancer) so the client address is read from the right hop.
+    """
+
     bind_fingerprint: bool = True
     """If True, tokens are bound to IP+UA hash; tokens cannot be shared."""
 
@@ -167,6 +175,9 @@ class WaitingRoomConfig:
             except ValueError as exc:
                 msg = f"allowlist_ips entry {entry!r} is not an IP address or network"
                 raise ValueError(msg) from exc
+        if self.trusted_proxy_count < 0:
+            msg = "trusted_proxy_count must be >= 0"
+            raise ValueError(msg)
         if self.capacity < 0:
             msg = "capacity must be >= 0"
             raise ValueError(msg)
