@@ -19,6 +19,7 @@ from waiting_room.core.exceptions import (
     BackendUnavailableError,
     InvalidTokenError,
     KillSwitchEngagedError,
+    RateLimitedError,
 )
 from waiting_room.core.settings import FailureMode
 
@@ -68,6 +69,8 @@ def waiting_room_protect(room_name: str = "default") -> Callable[[ViewFn], ViewF
                     user_id=authenticated_user_id(request),
                     existing_session_id=request.COOKIES.get(room.config.session_cookie_name),
                 )
+            except RateLimitedError:
+                return HttpResponse("Too many requests", status=429, content_type="text/plain")
             except KillSwitchEngagedError:
                 from django.shortcuts import render
 

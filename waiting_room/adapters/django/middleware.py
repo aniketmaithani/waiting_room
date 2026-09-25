@@ -31,6 +31,7 @@ from waiting_room.core.exceptions import (
     BackendUnavailableError,
     InvalidTokenError,
     KillSwitchEngagedError,
+    RateLimitedError,
 )
 from waiting_room.core.settings import FailureMode
 
@@ -70,6 +71,8 @@ class WaitingRoomMiddleware:
             return self._queue_and_redirect(request, room)
         except KillSwitchEngagedError:
             return self._render_killswitched(request, room)
+        except RateLimitedError:
+            return HttpResponse("Too many requests", status=429, content_type="text/plain")
         except BackendUnavailableError:
             return self._fail(request, room)
 

@@ -30,6 +30,7 @@ from waiting_room.core.events import InProcessEventEmitter
 from waiting_room.core.exceptions import (
     BackendUnavailableError,
     KillSwitchEngagedError,
+    RateLimitedError,
     SessionNotFoundError,
 )
 from waiting_room.core.interfaces import (
@@ -141,7 +142,7 @@ class WaitingRoom:
                 client,  # type: ignore[arg-type]
                 limit=config.rate_limit_per_ip_per_minute,
                 window_seconds=60,
-                key_prefix=f"{config.storage.key_prefix}:rl",
+                key_prefix=f"{config.storage.key_prefix}:{{{config.name}}}:rl",
             )
             if client is not None
             else NoopRateLimiter()
@@ -180,13 +181,11 @@ class WaitingRoom:
         user_id: str | None = None,
         existing_session_id: str | None = None,
     ) -> tuple[Session, QueuePosition]:
-        """Place a caller in the queue. Idempotent for an existing session id."""
-        if not self._rate_limiter.acquire(f"enqueue:{ip}"):
-            self._metric_incr("enqueue_rate_limited")
-            self._emitter.emit(EventType.REJECTED, {"reason": "rate_limited", "ip": ip})
-            msg = "rate limited"
-            raise BackendUnavailableError(msg)
+        """Place a caller in the queue. Idempotent for an existing session id.
 
+        Raises ``RateLimitedError`` when ``ip`` exceeds its enqueue budget and
+        ``KillSwitchEngagedError`` when the room is closed.
+        """
         fp = Fingerprint(ip=ip, user_agent_hash=_ua_hash(user_agent))
         if not is_valid_session_id(existing_session_id):
             existing_session_id = None
@@ -199,6 +198,11 @@ class WaitingRoom:
         )
 
         try:
+            if not self._rate_limiter.acquire(f"enqueue:{ip}"):
+                self._metric_incr("enqueue_rate_limited")
+                self._emitter.emit(EventType.REJECTED, {"reason": "rate_limited", "ip": ip})
+                msg = "rate limited"
+                raise RateLimitedError(msg)
             position = self._store_session(session)
             if position == _FOREIGN_SESSION:
                 # The id belongs to another client: never hand over their place.

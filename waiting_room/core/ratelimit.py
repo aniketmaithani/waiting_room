@@ -1,8 +1,10 @@
 """Per-key rate limiter.
 
-The Redis implementation uses a fixed-window counter (INCR + EXPIRE) — cheap
-and correct under high concurrency. Burst tolerance comes from the window
-length: shorter windows = tighter caps but more counter churn.
+The Redis implementation uses a fixed-window counter — cheap and correct under
+high concurrency. The window starts at the first hit and is never extended, so
+a key is always released ``window_seconds`` after its window opened. Burst
+tolerance comes from the window length: shorter windows mean tighter caps but
+more counter churn.
 """
 
 from __future__ import annotations
@@ -24,8 +26,17 @@ class NoopRateLimiter(RateLimiter):
         return True
 
 
+_FIXED_WINDOW_LUA = """
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+end
+return count
+"""
+
+
 class RedisRateLimiter(RateLimiter):
-    """Fixed-window counter (``INCR`` + ``EXPIRE``)."""
+    """Fixed-window counter (``INCR``, with ``EXPIRE`` set once per window)."""
 
     def __init__(
         self,
@@ -42,14 +53,11 @@ class RedisRateLimiter(RateLimiter):
         self._limit = int(limit)
         self._window = int(window_seconds)
         self._prefix = key_prefix.rstrip(":")
+        self._script = client.register_script(_FIXED_WINDOW_LUA)
 
     def acquire(self, key: str) -> bool:
         try:
-            pipe = self._client.pipeline()
-            full_key = f"{self._prefix}:{key}"
-            pipe.incr(full_key)
-            pipe.expire(full_key, self._window)
-            count, _ = pipe.execute()
+            count = self._script(keys=[f"{self._prefix}:{key}"], args=[self._window])
         except _redis_errors() as exc:
             raise BackendUnavailableError(str(exc)) from exc
         return int(count) <= self._limit

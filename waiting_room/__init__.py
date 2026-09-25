@@ -15,6 +15,7 @@ from waiting_room.core.exceptions import (
     BackendUnavailableError,
     InvalidTokenError,
     KillSwitchEngagedError,
+    RateLimitedError,
     SessionNotFoundError,
     WaitingRoomError,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "FailureMode",
     "InvalidTokenError",
     "KillSwitchEngagedError",
+    "RateLimitedError",
     "RedisConfig",
     "Session",
     "SessionNotFoundError",

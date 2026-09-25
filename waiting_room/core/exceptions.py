@@ -40,5 +40,9 @@ class KillSwitchEngagedError(WaitingRoomError):
     """Raised when the kill switch is on and the room rejects new entries."""
 
 
+class RateLimitedError(WaitingRoomError):
+    """Raised when a client exceeds its enqueue rate limit (adapters answer 429)."""
+
+
 class CapacityExceededError(WaitingRoomError):
     """Raised when no further admissions are allowed for the current window."""

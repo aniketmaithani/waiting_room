@@ -101,3 +101,14 @@ def test_health_endpoint(wired_room: WaitingRoom, client: Client) -> None:
     assert r.status_code == 200
     body = r.json()
     assert "default" in body["rooms"]
+
+
+def test_rate_limited_client_gets_429(wired_room: WaitingRoom, client: Client) -> None:
+    wired_room._rate_limiter = _Deny()
+    r = client.get("/checkout/")
+    assert r.status_code == 429
+
+
+class _Deny:
+    def acquire(self, key: str) -> bool:
+        return False
