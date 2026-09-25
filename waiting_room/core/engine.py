@@ -194,7 +194,12 @@ class WaitingRoom:
 
         try:
             score = self._next_score(session.enqueued_at)
-            position = self._storage.enqueue(self.config.name, session, score=score)
+            position = self._storage.enqueue(
+                self.config.name,
+                session,
+                score=score,
+                ttl_seconds=self.config.queued_session_ttl_seconds,
+            )
         except BackendUnavailableError:
             return self._handle_backend_unavailable(session)
 
@@ -216,7 +221,11 @@ class WaitingRoom:
 
     def position(self, session_id: str) -> QueuePosition:
         try:
-            snap = self._storage.position(self.config.name, session_id)
+            snap = self._storage.position(
+                self.config.name,
+                session_id,
+                ttl_seconds=self.config.queued_session_ttl_seconds,
+            )
         except BackendUnavailableError:
             if self.config.failure_mode is FailureMode.FAIL_OPEN:
                 return QueuePosition(position=0, queue_size=0, estimated_wait_seconds=0.0)
@@ -291,7 +300,11 @@ class WaitingRoom:
             raise
 
     def reclaim(self) -> int:
-        """Sweep abandoned/expired sessions. Safe to call from a periodic task."""
+        """Drop waiters idle for ``queued_session_ttl_seconds`` and expired admissions.
+
+        Safe to call from a periodic task. Admission slots are also freed lazily
+        on every admission tick, so this is housekeeping rather than a necessity.
+        """
         cutoff = time.time() - self.config.queued_session_ttl_seconds
         try:
             count = self._storage.reclaim_expired(self.config.name, cutoff)

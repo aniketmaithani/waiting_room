@@ -88,15 +88,46 @@ def test_release_admission_frees_slot(backend: RedisStorageBackend) -> None:
     assert backend.admitted_count("test") == 0
 
 
-def test_reclaim_drops_old_sessions(backend: RedisStorageBackend) -> None:
-    old_ts = time.time() - 1_000
-    fresh_ts = time.time()
-    backend.enqueue("test", _make_session("old"), score=old_ts)
-    backend.enqueue("test", _make_session("fresh"), score=fresh_ts)
+def test_reclaim_drops_idle_sessions(
+    backend: RedisStorageBackend,
+    redis_client: redis.Redis,
+) -> None:
+    backend.enqueue("test", _make_session("idle"), score=time.time())
+    backend.enqueue("test", _make_session("fresh"), score=time.time() + 0.1)
+    redis_client.zadd("wr:{test}:seen", {"idle": time.time() - 1_000})
     reclaimed = backend.reclaim_expired("test", before_ts=time.time() - 100)
-    assert reclaimed >= 1
+    assert reclaimed == 1
     assert backend.queue_size("test") == 1
     assert backend.position("test", "fresh").position == 1
+    assert backend.get_session("test", "idle") is None
+
+
+def test_reclaim_keeps_long_waiters_that_still_poll(backend: RedisStorageBackend) -> None:
+    # Joined long ago, but polled just now: must keep their place.
+    backend.enqueue("test", _make_session("patient"), score=time.time() - 10_000)
+    backend.position("test", "patient", ttl_seconds=60)
+    assert backend.reclaim_expired("test", before_ts=time.time() - 100) == 0
+    assert backend.position("test", "patient").position == 1
+
+
+def test_session_ttl_is_configurable_and_refreshed_by_polls(
+    backend: RedisStorageBackend,
+    redis_client: redis.Redis,
+) -> None:
+    backend.enqueue("test", _make_session("s1"), score=time.time(), ttl_seconds=50)
+    key = "wr:{test}:session:s1"
+    assert 0 < redis_client.ttl(key) <= 50
+    backend.position("test", "s1", ttl_seconds=500)
+    assert redis_client.ttl(key) > 50
+
+
+def test_position_without_ttl_is_read_only(
+    backend: RedisStorageBackend,
+    redis_client: redis.Redis,
+) -> None:
+    backend.enqueue("test", _make_session("s1"), score=time.time(), ttl_seconds=50)
+    backend.position("test", "s1")
+    assert redis_client.ttl("wr:{test}:session:s1") <= 50
 
 
 def test_get_session_round_trip(backend: RedisStorageBackend) -> None:

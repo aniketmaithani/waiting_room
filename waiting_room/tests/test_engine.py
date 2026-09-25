@@ -141,3 +141,13 @@ def test_custom_strategy_narrows_admissions(make_room) -> None:
     room._strategy = _Nobody()
     s, _ = room.enqueue(ip="1.1.1.1", user_agent="ua")
     assert room.try_admit(s.session_id) is None
+
+
+def test_reclaim_uses_idle_time_not_join_time(make_room, redis_client) -> None:
+    room = make_room(admit_per_second=0.001, capacity=0)
+    room.config.queued_session_ttl_seconds = 60
+    s, _ = room.enqueue(ip="1.1.1.1", user_agent="ua")
+    redis_client.zadd("wr:{test}:queue", {s.session_id: 1.0})  # joined long ago
+    room.position(s.session_id)  # but still polling
+    assert room.reclaim() == 0
+    assert room.position(s.session_id).position == 1

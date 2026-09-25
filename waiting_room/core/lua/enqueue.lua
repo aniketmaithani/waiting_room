@@ -2,10 +2,12 @@
 -- KEYS[1] = queue sorted set
 -- KEYS[2] = session hash
 -- KEYS[3] = kill switch key
+-- KEYS[4] = last-seen sorted set (member=session_id, score=unix seconds)
 -- ARGV[1] = session id
--- ARGV[2] = score (enqueue timestamp, ms)
+-- ARGV[2] = score (enqueue timestamp, seconds)
 -- ARGV[3] = session ttl seconds
--- ARGV[4..]  = alternating hash field/value pairs
+-- ARGV[4] = now (unix seconds)
+-- ARGV[5..]  = alternating hash field/value pairs
 -- Returns: 1-indexed position, or -1 if the kill switch is engaged.
 
 if redis.call('GET', KEYS[3]) == '1' then
@@ -13,9 +15,10 @@ if redis.call('GET', KEYS[3]) == '1' then
 end
 
 redis.call('ZADD', KEYS[1], 'NX', ARGV[2], ARGV[1])
+redis.call('ZADD', KEYS[4], ARGV[4], ARGV[1])
 
 local hash_args = {}
-for i = 4, #ARGV do
+for i = 5, #ARGV do
   table.insert(hash_args, ARGV[i])
 end
 if #hash_args > 0 then

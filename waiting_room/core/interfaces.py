@@ -30,12 +30,26 @@ class StorageBackend(ABC):
     """
 
     @abstractmethod
-    def enqueue(self, room: str, session: Session, score: float) -> int:
-        """Insert ``session`` at ``score``. Returns its 1-indexed position."""
+    def enqueue(
+        self,
+        room: str,
+        session: Session,
+        score: float,
+        *,
+        ttl_seconds: int = 1_800,
+    ) -> int:
+        """Insert ``session`` at ``score`` (idempotent). Returns its 1-indexed position.
+
+        Session metadata lives for ``ttl_seconds`` unless refreshed by ``position``.
+        """
 
     @abstractmethod
-    def position(self, room: str, session_id: str) -> QueuePosition:
-        """Return the session's current position. ``position=-1`` if unknown."""
+    def position(self, room: str, session_id: str, *, ttl_seconds: int = 0) -> QueuePosition:
+        """Return the session's position: ``0`` if admitted, ``-1`` if unknown.
+
+        With ``ttl_seconds > 0`` a queued session is also marked as seen now and
+        its metadata TTL is refreshed, so active waiters are never reclaimed.
+        """
 
     @abstractmethod
     def queue_size(self, room: str) -> int:
@@ -78,7 +92,7 @@ class StorageBackend(ABC):
 
     @abstractmethod
     def reclaim_expired(self, room: str, before_ts: float) -> int:
-        """Drop queued/admitted sessions whose deadline has passed. Returns count."""
+        """Drop sessions idle since ``before_ts`` and expired admissions. Returns count."""
 
     @abstractmethod
     def set_kill_switch(self, room: str, *, engaged: bool) -> None:

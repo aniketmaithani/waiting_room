@@ -4,7 +4,8 @@ Key layout (room name wrapped in ``{}`` so Redis Cluster co-locates a room's
 keys on the same hash slot):
 
 * ``<prefix>:{<room>}:queue``       — sorted set, score=enqueued_at_ms
-* ``<prefix>:{<room>}:session:<id>``— hash with metadata, EXPIRE applied
+* ``<prefix>:{<room>}:session:<id>``— hash with metadata, EXPIRE refreshed on poll
+* ``<prefix>:{<room>}:seen``        — sorted set, score=last poll (unix seconds)
 * ``<prefix>:{<room>}:admitted``    — sorted set, score=slot_deadline_ms
 * ``<prefix>:{<room>}:bucket``      — hash, shared admission token bucket
 * ``<prefix>:{<room>}:killswitch``  — string ``"1"`` when engaged
@@ -85,6 +86,9 @@ class RedisStorageBackend(StorageBackend):
     def _admitted_key(self, room: str) -> str:
         return f"{self._room_ns(room)}:admitted"
 
+    def _seen_key(self, room: str) -> str:
+        return f"{self._room_ns(room)}:seen"
+
     def _bucket_key(self, room: str) -> str:
         return f"{self._room_ns(room)}:bucket"
 
@@ -93,7 +97,14 @@ class RedisStorageBackend(StorageBackend):
 
     # ---- StorageBackend ------------------------------------------------------
 
-    def enqueue(self, room: str, session: Session, score: float) -> int:
+    def enqueue(
+        self,
+        room: str,
+        session: Session,
+        score: float,
+        *,
+        ttl_seconds: int = 1_800,
+    ) -> int:
         fp = session.fingerprint or Fingerprint("", "")
         hash_args: list[str] = [
             "session_id",
@@ -117,11 +128,13 @@ class RedisStorageBackend(StorageBackend):
                     self._queue_key(room),
                     self._session_key(room, session.session_id),
                     self._killswitch_key(room),
+                    self._seen_key(room),
                 ],
                 args=[
                     session.session_id,
                     repr(float(score)),
-                    1800,  # session-hash TTL; engine bumps via update_session
+                    int(ttl_seconds),
+                    int(time.time()),
                     *hash_args,
                 ],
             )
@@ -129,21 +142,23 @@ class RedisStorageBackend(StorageBackend):
             raise BackendUnavailableError(str(exc)) from exc
         return int(position)
 
-    def position(self, room: str, session_id: str) -> QueuePosition:
+    def position(self, room: str, session_id: str, *, ttl_seconds: int = 0) -> QueuePosition:
         try:
-            pos, size = self._scripts["position"](
-                keys=[self._queue_key(room)],
-                args=[session_id],
+            pos, size, admitted = self._scripts["position"](
+                keys=[
+                    self._queue_key(room),
+                    self._admitted_key(room),
+                    self._seen_key(room),
+                    self._session_key(room, session_id),
+                ],
+                args=[session_id, int(time.time()), int(ttl_seconds)],
             )
         except _redis_errors() as exc:
             raise BackendUnavailableError(str(exc)) from exc
         pos = int(pos)
-        size = int(size)
-        return QueuePosition(
-            position=pos if pos > 0 else (0 if self._is_admitted(room, session_id) else -1),
-            queue_size=size,
-            estimated_wait_seconds=None,
-        )
+        if pos <= 0:
+            pos = 0 if int(admitted) else -1
+        return QueuePosition(position=pos, queue_size=int(size), estimated_wait_seconds=None)
 
     def queue_size(self, room: str) -> int:
         try:
@@ -161,6 +176,7 @@ class RedisStorageBackend(StorageBackend):
                     self._admitted_key(room),
                     self._bucket_key(room),
                     self._killswitch_key(room),
+                    self._seen_key(room),
                 ],
                 args=[
                     int(n),
@@ -178,8 +194,11 @@ class RedisStorageBackend(StorageBackend):
 
     def remove(self, room: str, session_id: str) -> bool:
         try:
-            removed = self._client.zrem(self._queue_key(room), session_id)
-            self._client.delete(self._session_key(room, session_id))
+            pipe = self._client.pipeline()
+            pipe.zrem(self._queue_key(room), session_id)
+            pipe.zrem(self._seen_key(room), session_id)
+            pipe.delete(self._session_key(room, session_id))
+            removed, _, _ = pipe.execute()
         except _redis_errors() as exc:
             raise BackendUnavailableError(str(exc)) from exc
         return bool(removed)
@@ -246,11 +265,10 @@ class RedisStorageBackend(StorageBackend):
 
     def reclaim_expired(self, room: str, before_ts: float) -> int:
         try:
-            # Queue scores are seconds (set in enqueue); admitted scores are ms
-            # (stamped by admit_batch). Pass each side its own cutoff unit.
+            # Idle cutoff is in seconds (last poll); admitted deadlines are in ms.
             count = self._scripts["reclaim"](
-                keys=[self._queue_key(room), self._admitted_key(room)],
-                args=[repr(float(before_ts)), _now_ms()],
+                keys=[self._queue_key(room), self._admitted_key(room), self._seen_key(room)],
+                args=[repr(float(before_ts)), _now_ms(), self._session_prefix(room)],
             )
         except _redis_errors() as exc:
             raise BackendUnavailableError(str(exc)) from exc
@@ -275,14 +293,6 @@ class RedisStorageBackend(StorageBackend):
     def ping(self) -> bool:
         try:
             return bool(self._client.ping())
-        except _redis_errors():
-            return False
-
-    # ---- helpers -------------------------------------------------------------
-
-    def _is_admitted(self, room: str, session_id: str) -> bool:
-        try:
-            return self._client.zscore(self._admitted_key(room), session_id) is not None
         except _redis_errors():
             return False
 

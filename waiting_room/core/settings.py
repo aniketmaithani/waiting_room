@@ -103,7 +103,7 @@ class WaitingRoomConfig:
     """How long an issued admission token remains valid."""
 
     queued_session_ttl_seconds: int = 1_800
-    """Idle queued sessions older than this are reclaimed."""
+    """Queued sessions that stop polling for this long are reclaimed."""
 
     admission_grace_seconds: int = 60
     """Window after admission before an unused ticket is auto-released."""

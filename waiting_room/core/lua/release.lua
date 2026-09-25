@@ -5,7 +5,7 @@
 -- Returns: 1 if the slot was held, 0 otherwise.
 
 local removed = redis.call('ZREM', KEYS[1], ARGV[1])
-if removed == 1 then
+if removed == 1 and redis.call('EXISTS', KEYS[2]) == 1 then
   redis.call('HSET', KEYS[2], 'state', 'released')
 end
 return removed

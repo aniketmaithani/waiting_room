@@ -8,6 +8,7 @@
 -- KEYS[2] = admitted sorted set (member=session_id, score=slot deadline ms)
 -- KEYS[3] = token bucket hash (fields: tokens, ts)
 -- KEYS[4] = kill switch key
+-- KEYS[5] = last-seen sorted set (admitted sessions stop being tracked as waiters)
 -- ARGV[1] = max sessions to admit this tick
 -- ARGV[2] = now (ms)
 -- ARGV[3] = grace window (ms) an admitted session holds its slot before redeeming
@@ -77,6 +78,7 @@ if n > 0 then
   local members = redis.call('ZRANGE', KEYS[1], 0, n - 1)
   if #members > 0 then
     redis.call('ZREM', KEYS[1], unpack(members))
+    redis.call('ZREM', KEYS[5], unpack(members))
     local zadd_args = {}
     for _, sid in ipairs(members) do
       local key = prefix .. sid
