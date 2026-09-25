@@ -301,3 +301,20 @@ def test_status_reports_closed_room(make_room) -> None:
     payload = room.status_payload(s.session_id)
     assert payload["closed"] is True
     assert payload["ready"] is False
+
+
+def test_stats_snapshot(make_room) -> None:
+    room = make_room(capacity=7)
+    room.enqueue(ip="1.2.3.4", user_agent="ua")
+    stats = room.stats()
+    assert stats.queue_size == 1
+    assert stats.capacity == 7
+    assert stats.kill_switch_engaged is False
+    assert stats.healthy is True
+
+
+def test_flush_clears_room(make_room) -> None:
+    room = make_room()
+    room.enqueue(ip="1.2.3.4", user_agent="ua")
+    assert room.flush() > 0
+    assert room.stats().queue_size == 0

@@ -116,6 +116,10 @@ class StorageBackend(ABC):
         """Read the current kill-switch state."""
 
     @abstractmethod
+    def flush_room(self, room: str) -> int:
+        """Delete every piece of state stored for ``room``. Returns keys removed."""
+
+    @abstractmethod
     def ping(self) -> bool:
         """Best-effort liveness check for the underlying store."""
 

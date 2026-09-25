@@ -110,3 +110,15 @@ class QueuePosition:
     estimated_wait_seconds: float | None
     room_closed: bool = False
     """True while the room's kill switch is engaged (nobody is being admitted)."""
+
+
+@dataclass(slots=True, frozen=True)
+class RoomStats:
+    """Operational snapshot of a room, for dashboards and CLIs."""
+
+    queue_size: int
+    admitted: int
+    capacity: int
+    """Enforced concurrent admission cap (``0`` = unlimited)."""
+    kill_switch_engaged: bool
+    healthy: bool

@@ -316,11 +316,32 @@ class RedisStorageBackend(StorageBackend):
         except _redis_errors() as exc:
             raise BackendUnavailableError(str(exc)) from exc
 
+    def flush_room(self, room: str) -> int:
+        # Escape glob metacharacters so a room named "a*" never matches other rooms.
+        pattern = _glob_escape(f"{self._room_ns(room)}:") + "*"
+        removed = 0
+        try:
+            batch: list[bytes | str] = []
+            for key in self._client.scan_iter(match=pattern, count=500):
+                batch.append(key)
+                if len(batch) >= 500:
+                    removed += int(self._client.unlink(*batch))
+                    batch.clear()
+            if batch:
+                removed += int(self._client.unlink(*batch))
+        except _redis_errors() as exc:
+            raise BackendUnavailableError(str(exc)) from exc
+        return removed
+
     def ping(self) -> bool:
         try:
             return bool(self._client.ping())
         except _redis_errors():
             return False
+
+
+def _glob_escape(text: str) -> str:
+    return "".join(f"\\{ch}" if ch in "*?[]\\" else ch for ch in text)
 
 
 def _decode(raw: bytes | str) -> str:

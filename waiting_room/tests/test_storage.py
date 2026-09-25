@@ -215,3 +215,11 @@ def test_admit_batch_skips_sessions_without_metadata(
     redis_client.delete("wr:{test}:session:s0")
     assert backend.admit_batch("test", n=2, limits=UNLIMITED) == ["s1"]
     assert backend.admitted_count("test") == 1
+
+
+def test_flush_room_only_touches_that_room(backend: RedisStorageBackend) -> None:
+    backend.enqueue("a*", _make_session("s1"), score=time.time())
+    backend.enqueue("ab", _make_session("s2"), score=time.time())
+    assert backend.flush_room("a*") >= 1
+    assert backend.queue_size("a*") == 0
+    assert backend.queue_size("ab") == 1

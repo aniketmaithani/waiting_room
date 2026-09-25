@@ -22,6 +22,7 @@ from waiting_room.core._types import (
     EventType,
     Fingerprint,
     QueuePosition,
+    RoomStats,
     Session,
     SessionState,
     is_valid_session_id,
@@ -381,6 +382,27 @@ class WaitingRoom:
 
     def healthcheck(self) -> bool:
         return self._storage.ping()
+
+    def stats(self) -> RoomStats:
+        """Snapshot for dashboards. Never raises on backend failure."""
+        healthy = self._storage.ping()
+        return RoomStats(
+            queue_size=self._safe_queue_size(),
+            admitted=self._safe_admitted_count(),
+            capacity=self.effective_capacity,
+            kill_switch_engaged=self._read_kill_switch(),
+            healthy=healthy,
+        )
+
+    def flush(self) -> int:
+        """Drop all queue and admission state for this room. Destructive."""
+        return self._storage.flush_room(self.config.name)
+
+    def _read_kill_switch(self) -> bool:
+        try:
+            return self._storage.is_kill_switch_engaged(self.config.name)
+        except BackendUnavailableError:
+            return False
 
     # ---- internals -----------------------------------------------------------
 
