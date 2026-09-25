@@ -20,13 +20,13 @@
   </style>
 </head>
 <body>
-  <main class="card" data-sid="{{ session_id }}" data-stream="{{ stream_url }}" data-admit="{{ admit_url }}" data-next="{{ next_url }}">
+  <main class="card" data-status="{{ status_url }}" data-admit="{{ admit_url }}" data-next="{{ next_url }}">
     <h1>You're in line</h1>
-    <p class="lead">High demand — we're letting people in as space becomes available. Don't refresh; you'll lose your spot.</p>
+    <p class="lead">High demand — we're letting people in as space becomes available. Keep this tab open; refreshing won't lose your place.</p>
     <div class="pos" id="position">{{ position|default:"…" }}</div>
     <div class="meta" id="meta">of {{ queue_size }} in queue{% if estimated_wait_seconds %} · ~{{ estimated_wait_seconds|floatformat:0 }}s{% endif %}</div>
     <div class="bar"><i id="progress"></i></div>
-    <p id="hint" class="lead">We'll redirect you automatically — keep this tab open.</p>
+    <p id="hint" class="lead" aria-live="polite">We'll redirect you automatically — keep this tab open.</p>
     <p class="footer">Powered by waiting_room · room <code>{{ room.name }}</code></p>
   </main>
   <script>
@@ -36,50 +36,58 @@
       var metaEl = document.getElementById('meta');
       var barEl = document.getElementById('progress');
       var hintEl = document.getElementById('hint');
-      var streamUrl = card.dataset.stream;
+      var statusUrl = card.dataset.status;
       var admitUrl = card.dataset.admit;
       var nextUrl = card.dataset.next;
-      var sid = card.dataset.sid;
-      var startedAtSize = null;
+      var startedAt = null;
+      var failures = 0;
 
-      function render(payload) {
-        if (startedAtSize === null) startedAtSize = payload.queue_size || payload.position;
-        posEl.textContent = payload.position > 0 ? payload.position : '·';
-        metaEl.textContent = 'of ' + payload.queue_size + ' in queue' +
-          (payload.estimated_wait_seconds ? ' · ~' + Math.round(payload.estimated_wait_seconds) + 's' : '');
-        var pct = startedAtSize ? Math.max(0, 100 - (payload.position / startedAtSize) * 100) : 0;
-        barEl.style.width = (payload.ready ? 100 : pct).toFixed(1) + '%';
-        if (payload.ready) tryAdmit();
+      // Jittered delays spread a crowd's polls out instead of hammering in lockstep.
+      function later(fn, baseMs) {
+        var backoff = Math.min(30000, baseMs * Math.pow(2, failures));
+        setTimeout(fn, backoff * (0.75 + Math.random() * 0.5));
       }
 
-      function tryAdmit() {
-        hintEl.textContent = "It's your turn — sending you through…";
-        fetch(admitUrl, { method: 'POST', credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
-          .then(function (r) { return r.json(); })
-          .then(function (data) {
-            if (data.ready && data.redirect) window.location.replace(data.redirect);
-            else if (!data.ready) setTimeout(tryAdmit, 1500);
-          })
-          .catch(function () { setTimeout(tryAdmit, 2000); });
-      }
+      function leave() { window.location.replace(nextUrl); }
 
-      if ('EventSource' in window) {
-        var es = new EventSource(streamUrl, { withCredentials: true });
-        es.onmessage = function (ev) {
-          try { render(JSON.parse(ev.data)); } catch (_) { /* ignore */ }
-        };
-        es.onerror = function () { es.close(); poll(); };
-      } else {
-        poll();
+      function render(p) {
+        if (startedAt === null && p.position > 0) startedAt = p.position;
+        posEl.textContent = p.position > 0 ? p.position : '·';
+        metaEl.textContent = 'of ' + p.queue_size + ' in queue' +
+          (p.estimated_wait_seconds ? ' · ~' + Math.round(p.estimated_wait_seconds) + 's' : '');
+        var pct = startedAt ? Math.max(0, 100 - (p.position / startedAt) * 100) : 0;
+        barEl.style.width = (p.ready ? 100 : pct).toFixed(1) + '%';
       }
 
       function poll() {
-        var url = streamUrl.replace('/position', '/status');
-        fetch(url, { credentials: 'same-origin' })
-          .then(function (r) { return r.json(); })
-          .then(function (data) { render(data); if (!data.ready) setTimeout(poll, 2500); })
-          .catch(function () { setTimeout(poll, 4000); });
+        fetch(statusUrl, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+          .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+          .then(function (p) {
+            failures = 0;
+            render(p);
+            if (p.closed || p.position < 0) return leave();  // closed room / lost session
+            if (p.ready) return admit();
+            later(poll, 2500);
+          })
+          .catch(function () { failures++; later(poll, 2500); });
       }
+
+      function admit() {
+        hintEl.textContent = "It's your turn — sending you through…";
+        var body = new URLSearchParams({ next: nextUrl });
+        fetch(admitUrl, { method: 'POST', credentials: 'same-origin', body: body,
+                          headers: { 'Accept': 'application/json' } })
+          .then(function (r) { if (r.status >= 500) throw new Error(r.status); return r.json(); })
+          .then(function (data) {
+            failures = 0;
+            if (data.ready && data.redirect) window.location.replace(data.redirect);
+            else if (data.error) leave();
+            else later(poll, 1500);
+          })
+          .catch(function () { failures++; later(admit, 2000); });
+      }
+
+      poll();
     })();
   </script>
 </body>

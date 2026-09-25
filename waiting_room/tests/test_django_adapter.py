@@ -258,3 +258,13 @@ def test_unknown_room_is_404(wired_room: WaitingRoom, client: Client) -> None:
 def test_malformed_sid_is_400(wired_room: WaitingRoom, client: Client) -> None:
     assert client.get("/_waiting-room/status?sid=../../x&room=default").status_code == 400
     assert client.get("/_waiting-room/?sid=&room=default").status_code == 400
+
+
+def test_waiting_page_polls_status_endpoint(wired_room: WaitingRoom, client: Client) -> None:
+    sid = _sid(client, wired_room)
+    r = client.get(f"/_waiting-room/?sid={sid}&room=default&next=/checkout/")
+    assert r.status_code == 200
+    html = r.content.decode()
+    assert f'data-status="/_waiting-room/status?sid={sid}&amp;room=default"' in html
+    assert 'data-next="/checkout/"' in html
+    assert "EventSource" not in html
