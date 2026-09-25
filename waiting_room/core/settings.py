@@ -8,6 +8,7 @@ object the engine takes — everything else feeds into it.
 from __future__ import annotations
 
 import enum
+import ipaddress
 from dataclasses import dataclass, field
 
 
@@ -126,7 +127,7 @@ class WaitingRoomConfig:
     failure_mode: FailureMode = FailureMode.FAIL_CLOSED
 
     allowlist_ips: tuple[str, ...] = ()
-    """IPs that bypass the queue (CIDR matching is the caller's responsibility)."""
+    """IPs or CIDR networks (e.g. ``"10.0.0.0/8"``) that bypass the queue."""
 
     allowlist_user_ids: tuple[str, ...] = ()
     """User identifiers that bypass the queue (VIP / staff)."""
@@ -160,6 +161,12 @@ class WaitingRoomConfig:
         if not self.target_url.startswith("/") or self.target_url.startswith("//"):
             msg = "target_url must be an absolute path beginning with '/'"
             raise ValueError(msg)
+        for entry in self.allowlist_ips:
+            try:
+                ipaddress.ip_network(entry.strip(), strict=False)
+            except ValueError as exc:
+                msg = f"allowlist_ips entry {entry!r} is not an IP address or network"
+                raise ValueError(msg) from exc
         if self.capacity < 0:
             msg = "capacity must be >= 0"
             raise ValueError(msg)

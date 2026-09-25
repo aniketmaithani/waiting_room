@@ -318,3 +318,19 @@ def test_flush_clears_room(make_room) -> None:
     room.enqueue(ip="1.2.3.4", user_agent="ua")
     assert room.flush() > 0
     assert room.stats().queue_size == 0
+
+
+def test_allowlist_accepts_cidr_networks(make_room) -> None:
+    room = make_room()
+    room.config.allowlist_ips = ("10.0.0.0/8", "2001:db8::/32")
+    assert room.is_allowlisted(ip="10.1.2.3", user_id=None) is True
+    assert room.is_allowlisted(ip="2001:db8::1", user_id=None) is True
+    assert room.is_allowlisted(ip="11.0.0.1", user_id=None) is False
+    assert room.is_allowlisted(ip="not-an-ip", user_id=None) is False
+
+
+def test_invalid_allowlist_entry_is_rejected(secret) -> None:
+    from waiting_room.core.settings import WaitingRoomConfig
+
+    with pytest.raises(ValueError, match="allowlist_ips"):
+        WaitingRoomConfig(name="x", secret_key=secret, target_url="/", allowlist_ips=("nope",))

@@ -8,7 +8,9 @@ through the ``WaitingRoomConfig`` passed in.
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import ipaddress
 import itertools
 import logging
 import threading
@@ -70,6 +72,22 @@ _MIN_POLL_TICK_INTERVAL = 0.2
 
 def _ua_hash(user_agent: str) -> str:
     return hashlib.sha256(user_agent.encode("utf-8")).hexdigest()[:16]
+
+
+_Network = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+@functools.lru_cache(maxsize=64)
+def _parse_networks(entries: tuple[str, ...]) -> tuple[_Network, ...]:
+    return tuple(ipaddress.ip_network(entry.strip(), strict=False) for entry in entries)
+
+
+def _ip_in(ip: str, entries: tuple[str, ...]) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr in net for net in _parse_networks(entries))
 
 
 def _admission_limits(config: WaitingRoomConfig) -> AdmissionLimits:
@@ -175,7 +193,8 @@ class WaitingRoom:
         return self._limits.capacity
 
     def is_allowlisted(self, *, ip: str, user_id: str | None) -> bool:
-        if ip and ip in self.config.allowlist_ips:
+        """True if the caller bypasses the queue (IP/CIDR or user id allowlist)."""
+        if ip and _ip_in(ip, self.config.allowlist_ips):
             return True
         return bool(user_id and user_id in self.config.allowlist_user_ids)
 
