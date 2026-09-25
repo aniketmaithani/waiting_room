@@ -147,6 +147,61 @@ def order_complete(request):
 
 ---
 
+## Example: a flash-sale shop
+
+[`examples/django_shop/`](examples/django_shop/) is a small runnable Django
+project: a public product page and a `/checkout/` that sits behind the waiting
+room. It admits **1 shopper per second** and lets **at most 5 check out at
+once**, so the queue is easy to watch. Placing an order calls
+`release_admission()` so the next person gets in straight away.
+
+```bash
+# 1. Install the library with the Django extra (from the repo root)
+pip install -e ".[django]"
+
+# 2. Start Redis (or point REDIS_URL at an existing one)
+docker run --rm -p 6379:6379 redis:7          # or: redis-server
+
+# 3. Run the shop
+cd examples/django_shop
+python manage.py migrate
+python manage.py runserver                     # http://127.0.0.1:8000/
+```
+
+Open <http://127.0.0.1:8000/> and click **Buy now**. You land on the waiting
+page, which shows your position and sends you to checkout when it's your turn.
+
+To see the queue under load, send a crowd while you click through in the
+browser:
+
+```bash
+python crowd.py --users 30                     # every shopper queues, checks out, releases
+python manage.py waiting_room_status           # live queue / admitted / capacity
+```
+
+```
+shoppers: 30  admitted: 30  orders placed: 30
+first in after 0.0s, last after 29.4s (0.99/s)
+```
+
+Everything can be tuned with environment variables:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis to use (keys are prefixed `wr-shop`) |
+| `ADMIT_PER_SECOND` | `1` | Admission rate, shared by every worker process |
+| `CAPACITY` | `5` | Max shoppers checking out at once |
+| `ADMITTED_SESSION_TTL_SECONDS` | `120` | How long an admitted shopper keeps access |
+| `DJANGO_DEBUG` | `1` | Set `0` for production-like behaviour |
+| `COOKIE_SECURE` | `0` in debug | Secure cookies need HTTPS; keep `0` on plain HTTP |
+
+The rate holds across processes. Try `gunicorn -w 4 shop.wsgi` and the crowd
+is still admitted at `ADMIT_PER_SECOND`, never more than `CAPACITY` at once.
+The test suite drives this example end to end
+(`waiting_room/tests/test_example.py`), so it stays in sync with the library.
+
+---
+
 ## Decorator alternative
 
 Skip the middleware and gate one view at a time:
@@ -269,6 +324,9 @@ waiting_room/
 │   ├── templates/waiting_room/    # waiting.html, killswitch.html, admin_room_ops.html
 │   └── urls.py
 └── tests/               # pytest + pytest-django, fakeredis-backed
+
+examples/
+└── django_shop/         # runnable flash-sale demo + crowd simulator
 ```
 
 ---
