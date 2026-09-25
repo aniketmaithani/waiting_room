@@ -1,0 +1,8 @@
+{% extends "shop/base.html" %}
+{% block content %}
+  <h1>{{ product.name }}</h1>
+  <p class="muted">{{ product.price }} · only {{ product.stock }} pairs · drop is live</p>
+  <p>Checkout is protected by a virtual waiting room. When it's busy you'll be
+     held in line and sent through automatically when it's your turn.</p>
+  <a class="btn" href="{% url 'checkout' %}">Buy now</a>
+{% endblock %}

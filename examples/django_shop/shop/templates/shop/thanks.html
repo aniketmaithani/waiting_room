@@ -1,0 +1,7 @@
+{% extends "shop/base.html" %}
+{% block title %}Order placed{% endblock %}
+{% block content %}
+  <h1 id="thanks-title">Order {{ order_id }} placed 🎉</h1>
+  <p class="muted">Thanks! Your checkout slot has been released to the next person in line.</p>
+  <a class="btn" href="{% url 'product' %}">Back to the drop</a>
+{% endblock %}

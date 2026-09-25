@@ -30,3 +30,6 @@ htmlcov/
 # Local environment files (never commit secrets)
 .envs/
 .env
+
+# Example project database
+examples/**/db.sqlite3

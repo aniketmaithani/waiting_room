@@ -1,0 +1,16 @@
+{% extends "shop/base.html" %}
+{% block title %}Checkout{% endblock %}
+{% block content %}
+  <h1 id="checkout-title">Checkout</h1>
+  <p class="muted">You're through the waiting room. Your spot is held for a few minutes.</p>
+  <dl>
+    <dt>Item</dt><dd>{{ product.name }}</dd>
+    <dt>Price</dt><dd>{{ product.price }}</dd>
+    <dt>Still waiting</dt><dd>{{ stats.queue_size }}</dd>
+    <dt>Checking out now</dt><dd>{{ stats.admitted }} / {{ stats.capacity }}</dd>
+  </dl>
+  <form method="post">
+    {% csrf_token %}
+    <button class="btn" type="submit">Place order</button>
+  </form>
+{% endblock %}
