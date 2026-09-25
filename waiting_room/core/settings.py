@@ -106,7 +106,18 @@ class WaitingRoomConfig:
     """Queued sessions that stop polling for this long are reclaimed."""
 
     admission_grace_seconds: int = 60
-    """Window after admission before an unused ticket is auto-released."""
+    """Window after admission during which the ticket must be redeemed.
+
+    If the admitted user does not arrive in time, the slot is freed for the next
+    person in line and the ticket is refused.
+    """
+
+    admitted_session_ttl_seconds: int = 900
+    """How long an admitted user may keep using the protected area after redeeming.
+
+    Their capacity slot is held for this long unless ``WaitingRoom.release`` is
+    called earlier (e.g. once checkout completes).
+    """
 
     storage: RedisConfig = field(default_factory=RedisConfig)
     policy: AdmissionPolicy = field(
@@ -152,7 +163,12 @@ class WaitingRoomConfig:
         if self.capacity < 0:
             msg = "capacity must be >= 0"
             raise ValueError(msg)
-        for attr in ("token_ttl_seconds", "queued_session_ttl_seconds", "admission_grace_seconds"):
+        for attr in (
+            "token_ttl_seconds",
+            "queued_session_ttl_seconds",
+            "admission_grace_seconds",
+            "admitted_session_ttl_seconds",
+        ):
             if getattr(self, attr) <= 0:
                 msg = f"{attr} must be > 0"
                 raise ValueError(msg)

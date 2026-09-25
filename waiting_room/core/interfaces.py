@@ -92,6 +92,14 @@ class StorageBackend(ABC):
         """Number of currently-admitted sessions (i.e. consuming a capacity slot)."""
 
     @abstractmethod
+    def hold_admission(self, room: str, session_id: str, seconds: int) -> bool:
+        """Keep an admitted session's slot for ``seconds`` more.
+
+        Returns False if the session no longer holds a slot (e.g. its grace window
+        lapsed and the slot went to someone else).
+        """
+
+    @abstractmethod
     def release_admission(self, room: str, session_id: str) -> bool:
         """Free a capacity slot held by an admitted session."""
 

@@ -191,3 +191,80 @@ def test_reenqueue_of_admitted_session_does_not_requeue(make_room) -> None:
     assert again.state == SessionState.ADMITTED
     assert snap.position == 0
     assert room.position(s.session_id).position == 0
+
+
+def _admit(room, ip: str = "1.2.3.4", ua: str = "ua"):
+    s, _ = room.enqueue(ip=ip, user_agent=ua)
+    ticket = room.try_admit(s.session_id)
+    assert ticket is not None
+    return s, ticket
+
+
+def test_redeem_returns_reusable_pass(make_room) -> None:
+    room = make_room(admit_per_second=100, capacity=10)
+    s, ticket = _admit(room)
+    admission_pass = room.redeem(ticket.token, ip="1.2.3.4", user_agent="ua")
+    for _ in range(3):
+        verified = room.verify_pass(admission_pass.token, ip="1.2.3.4", user_agent="ua")
+        assert verified.session_id == s.session_id
+
+
+def test_pass_is_bound_to_fingerprint(make_room) -> None:
+    room = make_room(admit_per_second=100, capacity=10)
+    _, ticket = _admit(room)
+    admission_pass = room.redeem(ticket.token, ip="1.2.3.4", user_agent="ua")
+    with pytest.raises(InvalidTokenError):
+        room.verify_pass(admission_pass.token, ip="9.9.9.9", user_agent="ua")
+
+
+def test_ticket_and_pass_are_not_interchangeable(make_room) -> None:
+    room = make_room(admit_per_second=100, capacity=10)
+    _, ticket = _admit(room)
+    with pytest.raises(InvalidTokenError):
+        room.verify_pass(ticket.token, ip="1.2.3.4", user_agent="ua")
+    admission_pass = room.redeem(ticket.token, ip="1.2.3.4", user_agent="ua")
+    with pytest.raises(InvalidTokenError):
+        room.redeem(admission_pass.token, ip="1.2.3.4", user_agent="ua")
+
+
+def test_ticket_from_another_room_is_rejected(make_room) -> None:
+    room_a = make_room(name="a", admit_per_second=100, capacity=10)
+    room_b = make_room(name="b", admit_per_second=100, capacity=10)
+    _, ticket = _admit(room_a)
+    with pytest.raises(InvalidTokenError, match="different room"):
+        room_b.redeem(ticket.token, ip="1.2.3.4", user_agent="ua")
+
+
+def test_redeem_holds_slot_for_admitted_session_ttl(make_room, redis_client) -> None:
+    import time
+
+    room = make_room(admit_per_second=100, capacity=10)
+    s, ticket = _admit(room)
+    room.redeem(ticket.token, ip="1.2.3.4", user_agent="ua")
+    deadline_ms = redis_client.zscore("wr:{test}:admitted", s.session_id)
+    expected = (time.time() + room.config.admitted_session_ttl_seconds) * 1000
+    assert abs(deadline_ms - expected) < 5_000
+
+
+def test_redeem_after_admission_lapsed_is_rejected(make_room, redis_client) -> None:
+    room = make_room(admit_per_second=100, capacity=10)
+    s, ticket = _admit(room)
+    redis_client.zrem("wr:{test}:admitted", s.session_id)  # grace window passed
+    with pytest.raises(InvalidTokenError, match="lapsed"):
+        room.redeem(ticket.token, ip="1.2.3.4", user_agent="ua")
+
+
+def test_fail_open_ticket_is_bound_to_caller(make_room) -> None:
+    from waiting_room.core.exceptions import BackendUnavailableError
+    from waiting_room.core.settings import FailureMode
+
+    room = make_room(failure_mode=FailureMode.FAIL_OPEN)
+
+    def _down(*_args: object, **_kwargs: object) -> None:
+        raise BackendUnavailableError
+
+    room._storage.get_session = _down
+    ticket = room.try_admit("a" * 32, ip="1.2.3.4", user_agent="ua")
+    assert ticket is not None
+    verified = room._signer.verify(ticket.token, fingerprint=room._fingerprint("1.2.3.4", "ua"))
+    assert verified.session_id == "a" * 32

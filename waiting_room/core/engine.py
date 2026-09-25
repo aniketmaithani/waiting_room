@@ -29,6 +29,7 @@ from waiting_room.core._types import (
 from waiting_room.core.events import InProcessEventEmitter
 from waiting_room.core.exceptions import (
     BackendUnavailableError,
+    InvalidTokenError,
     KillSwitchEngagedError,
     RateLimitedError,
     SessionNotFoundError,
@@ -49,7 +50,7 @@ from waiting_room.core.settings import (
     _PolicyKind,
 )
 from waiting_room.core.storage.redis_backend import RedisStorageBackend
-from waiting_room.core.tokens import HMACTokenSigner
+from waiting_room.core.tokens import PASS_PURPOSE, HMACTokenSigner
 
 if TYPE_CHECKING:
     import redis as redis_pkg
@@ -248,18 +249,25 @@ class WaitingRoom:
             estimated_wait_seconds=wait,
         )
 
-    def try_admit(self, session_id: str) -> AdmissionTicket | None:
+    def try_admit(
+        self,
+        session_id: str,
+        *,
+        ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> AdmissionTicket | None:
         """Run an admission tick and, if this session was admitted, mint a ticket.
 
         Adapters call this when a queued client polls. Returns ``None`` if the
-        session is still waiting.
+        session is still waiting. ``ip``/``user_agent`` describe the caller; they
+        bind the ticket when the backend is down and ``FAIL_OPEN`` applies.
         """
         try:
             self._tick_admit()
             session = self._storage.get_session(self.config.name, session_id)
         except BackendUnavailableError:
             if self.config.failure_mode is FailureMode.FAIL_OPEN:
-                return self._mint_open_ticket(session_id)
+                return self._mint_open_ticket(session_id, ip=ip, user_agent=user_agent)
             raise
         if session is None:
             raise SessionNotFoundError(session_id)
@@ -279,13 +287,42 @@ class WaitingRoom:
         return ticket
 
     def redeem(self, token: str, *, ip: str, user_agent: str) -> AdmissionTicket:
-        """Validate and mark a token as used. Raises ``InvalidTokenError`` on failure."""
-        fp = Fingerprint(ip=ip, user_agent_hash=_ua_hash(user_agent)).as_str()
+        """Spend a single-use admission ticket and return the caller's pass.
+
+        The pass is a reusable, fingerprint-bound credential valid for
+        ``admitted_session_ttl_seconds``; adapters store it in a cookie and check
+        it with ``verify_pass`` on every later request. The session's capacity
+        slot is held for the same period. Raises ``InvalidTokenError`` (or a
+        subclass) if the ticket is forged, expired, reused, issued by another
+        room, or its admission already lapsed.
+        """
+        fp = self._fingerprint(ip, user_agent)
         ticket = self._signer.verify(token, fingerprint=fp)
-        # Single-use: claim the nonce. Raises if already used.
+        self._check_room(ticket)
         self._signer.mark_used(token)
+        ttl = self.config.admitted_session_ttl_seconds
+        if not self._storage.hold_admission(self.config.name, ticket.session_id, ttl):
+            msg = "admission lapsed before the ticket was redeemed"
+            raise InvalidTokenError(msg)
+        admission_pass = self._signer.issue(
+            session_id=ticket.session_id,
+            room=self.config.name,
+            fingerprint=fp,
+            ttl_seconds=ttl,
+            purpose=PASS_PURPOSE,
+        )
         self._emitter.emit(EventType.REDEEMED, {"session_id": ticket.session_id})
         self._metric_incr("redeemed")
+        return admission_pass
+
+    def verify_pass(self, token: str, *, ip: str, user_agent: str) -> AdmissionTicket:
+        """Validate an admitted user's pass. Pure HMAC check, no backend call."""
+        ticket = self._signer.verify(
+            token,
+            fingerprint=self._fingerprint(ip, user_agent),
+            purpose=PASS_PURPOSE,
+        )
+        self._check_room(ticket)
         return ticket
 
     def release(self, session_id: str) -> bool:
@@ -387,13 +424,31 @@ class WaitingRoom:
             return session, QueuePosition(position=0, queue_size=0, estimated_wait_seconds=0.0)
         raise BackendUnavailableError("storage backend is unreachable")
 
-    def _mint_open_ticket(self, session_id: str) -> AdmissionTicket:
+    def _mint_open_ticket(
+        self,
+        session_id: str,
+        *,
+        ip: str | None,
+        user_agent: str | None,
+    ) -> AdmissionTicket:
+        fingerprint = ""
+        if ip is not None and user_agent is not None:
+            fingerprint = self._fingerprint(ip, user_agent)
         return self._signer.issue(
             session_id=session_id,
             room=self.config.name,
-            fingerprint="",
+            fingerprint=fingerprint,
             ttl_seconds=self.config.token_ttl_seconds,
         )
+
+    @staticmethod
+    def _fingerprint(ip: str, user_agent: str) -> str:
+        return Fingerprint(ip=ip, user_agent_hash=_ua_hash(user_agent)).as_str()
+
+    def _check_room(self, ticket: AdmissionTicket) -> None:
+        if ticket.room != self.config.name:
+            msg = "token was issued for a different room"
+            raise InvalidTokenError(msg)
 
     def _store_session(self, session: Session) -> int:
         return self._storage.enqueue(

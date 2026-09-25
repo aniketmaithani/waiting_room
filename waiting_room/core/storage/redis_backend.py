@@ -255,6 +255,21 @@ class RedisStorageBackend(StorageBackend):
         except _redis_errors() as exc:
             raise BackendUnavailableError(str(exc)) from exc
 
+    def hold_admission(self, room: str, session_id: str, seconds: int) -> bool:
+        try:
+            pipe = self._client.pipeline()
+            pipe.zadd(
+                self._admitted_key(room),
+                {session_id: _now_ms() + int(seconds) * 1000},
+                xx=True,
+                ch=True,
+            )
+            pipe.expire(self._session_key(room, session_id), int(seconds))
+            changed, _ = pipe.execute()
+        except _redis_errors() as exc:
+            raise BackendUnavailableError(str(exc)) from exc
+        return bool(changed)
+
     def release_admission(self, room: str, session_id: str) -> bool:
         try:
             removed = self._scripts["release"](
