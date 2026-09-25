@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import fakeredis
 import pytest
+import redis
 
 if TYPE_CHECKING:
     from django.test import Client
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def wired_room() -> WaitingRoom:
+def wired_room(redis_client: redis.Redis) -> WaitingRoom:
     """Build a room and inject it into the registry, replacing what startup created."""
     from waiting_room.adapters.django import registry
     from waiting_room.adapters.django.signals import make_handler
@@ -36,7 +36,7 @@ def wired_room() -> WaitingRoom:
         rate_limit_per_ip_per_minute=1_000_000,
         cookie_secure=False,
     )
-    room = WaitingRoom(cfg, redis_client=fakeredis.FakeRedis())
+    room = WaitingRoom(cfg, redis_client=redis_client)
     if isinstance(room.emitter, InProcessEventEmitter):
         room.emitter.subscribe(make_handler("default"))
     registry.reset()

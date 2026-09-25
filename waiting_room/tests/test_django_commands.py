@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from io import StringIO
 
-import fakeredis
 import pytest
+import redis
 from django.core.management import call_command
 from django.core.management.base import CommandError
 
@@ -19,7 +19,7 @@ from waiting_room.core.settings import (
 
 
 @pytest.fixture
-def cmd_room() -> WaitingRoom:
+def cmd_room(redis_client: redis.Redis) -> WaitingRoom:
     cfg = WaitingRoomConfig(
         name="cmd",
         secret_key="x" * 64,
@@ -29,7 +29,7 @@ def cmd_room() -> WaitingRoom:
         storage=RedisConfig(url="redis://fake/0"),
         rate_limit_per_ip_per_minute=1_000_000,
     )
-    room = WaitingRoom(cfg, redis_client=fakeredis.FakeRedis())
+    room = WaitingRoom(cfg, redis_client=redis_client)
     registry.reset()
     registry.register("cmd", room)
     yield room

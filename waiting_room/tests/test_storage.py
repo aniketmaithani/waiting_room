@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import time
 
-import fakeredis
 import pytest
+import redis
 
 from waiting_room.core._types import AdmissionLimits, Fingerprint, Session, SessionState
 from waiting_room.core.storage import RedisStorageBackend
@@ -14,7 +14,7 @@ UNLIMITED = AdmissionLimits()
 
 
 @pytest.fixture
-def backend(redis_client: fakeredis.FakeRedis) -> RedisStorageBackend:
+def backend(redis_client: redis.Redis) -> RedisStorageBackend:
     return RedisStorageBackend(redis_client, key_prefix="wr")
 
 
@@ -51,7 +51,7 @@ def test_position_minus_one_for_unknown(backend: RedisStorageBackend) -> None:
 
 def test_admit_batch_is_atomic_under_concurrency(
     backend: RedisStorageBackend,
-    redis_client: fakeredis.FakeRedis,
+    redis_client: redis.Redis,
 ) -> None:
     # Enqueue 100 sessions, then try to admit "more than exists" twice in succession.
     # Each call must only return what's actually there — never duplicate sessions.
@@ -133,7 +133,7 @@ def test_admit_batch_respects_capacity(backend: RedisStorageBackend) -> None:
 
 
 def test_admit_batch_rate_is_shared_across_callers(
-    redis_client: fakeredis.FakeRedis,
+    redis_client: redis.Redis,
 ) -> None:
     # Two backends model two worker processes pointing at the same Redis.
     a = RedisStorageBackend(redis_client, key_prefix="wr")
@@ -156,7 +156,7 @@ def test_admit_batch_rate_below_one_per_second_still_admits(
 
 def test_admit_batch_frees_expired_slots(
     backend: RedisStorageBackend,
-    redis_client: fakeredis.FakeRedis,
+    redis_client: redis.Redis,
 ) -> None:
     _fill(backend, 2)
     limits = AdmissionLimits(capacity=1)
@@ -178,7 +178,7 @@ def test_admit_batch_halts_while_kill_switch_engaged(backend: RedisStorageBacken
 
 def test_admit_batch_skips_sessions_without_metadata(
     backend: RedisStorageBackend,
-    redis_client: fakeredis.FakeRedis,
+    redis_client: redis.Redis,
 ) -> None:
     _fill(backend, 2)
     redis_client.delete("wr:{test}:session:s0")

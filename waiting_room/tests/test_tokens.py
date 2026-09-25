@@ -6,6 +6,7 @@ import time
 
 import fakeredis
 import pytest
+import redis
 
 from waiting_room.core.exceptions import (
     BackendUnavailableError,
@@ -18,7 +19,7 @@ from waiting_room.core.tokens import HMACTokenSigner
 
 
 @pytest.fixture
-def signer(redis_client: fakeredis.FakeRedis) -> HMACTokenSigner:
+def signer(redis_client: redis.Redis) -> HMACTokenSigner:
     return HMACTokenSigner(
         "x" * 64,
         redis_client=redis_client,
@@ -89,7 +90,6 @@ def test_garbage_tokens_are_invalid(signer: HMACTokenSigner, token: str) -> None
 
 
 def test_mark_used_wraps_backend_errors() -> None:
-    import redis
 
     class _Down(fakeredis.FakeRedis):
         def set(self, *args: object, **kwargs: object) -> bool:

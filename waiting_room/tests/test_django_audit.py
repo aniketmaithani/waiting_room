@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import fakeredis
 import pytest
+import redis
 
 from waiting_room.adapters.django import registry
 from waiting_room.adapters.django.models import AdmissionEvent
@@ -18,7 +18,7 @@ from waiting_room.core.settings import (
 
 
 @pytest.fixture
-def audit_room() -> WaitingRoom:
+def audit_room(redis_client: redis.Redis) -> WaitingRoom:
     cfg = WaitingRoomConfig(
         name="audit",
         secret_key="x" * 64,
@@ -28,7 +28,7 @@ def audit_room() -> WaitingRoom:
         storage=RedisConfig(url="redis://fake/0"),
         rate_limit_per_ip_per_minute=1_000_000,
     )
-    room = WaitingRoom(cfg, redis_client=fakeredis.FakeRedis())
+    room = WaitingRoom(cfg, redis_client=redis_client)
     assert isinstance(room.emitter, InProcessEventEmitter)
     room.emitter.subscribe(make_handler("audit"))
     registry.register("audit", room)
