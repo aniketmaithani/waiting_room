@@ -36,7 +36,7 @@ from waiting_room.core.settings import (
 _DEFAULT_ROOM = "default"
 
 
-def _coerce_policy(raw: Mapping[str, Any] | None) -> AdmissionPolicy:
+def _coerce_policy(raw: Mapping[str, Any] | None, *, room_capacity: int) -> AdmissionPolicy:
     if not raw:
         return AdmissionPolicy.time_bucket(admit_per_second=10.0)
     kind = str(raw.get("KIND", "time_bucket")).lower()
@@ -46,7 +46,8 @@ def _coerce_policy(raw: Mapping[str, Any] | None) -> AdmissionPolicy:
             burst=int(raw.get("BURST", 0)),
         )
     if kind == "capacity_aware":
-        return AdmissionPolicy.capacity_aware(capacity=int(raw["CAPACITY"]))
+        # POLICY.CAPACITY wins; otherwise fall back to the room-level CAPACITY.
+        return AdmissionPolicy.capacity_aware(capacity=int(raw.get("CAPACITY", room_capacity)))
     msg = f"unknown WAITING_ROOM POLICY KIND: {kind!r}"
     raise ImproperlyConfigured(msg)
 
@@ -81,16 +82,23 @@ def _build_one(name: str, raw: Mapping[str, Any]) -> WaitingRoomConfig:
         msg = f"WAITING_ROOM[{name!r}] missing required {missing!r}"
         raise ImproperlyConfigured(msg) from exc
 
+    capacity = int(raw.get("CAPACITY", 5_000))
+    try:
+        policy = _coerce_policy(raw.get("POLICY"), room_capacity=capacity)
+    except (TypeError, ValueError) as exc:
+        msg = f"WAITING_ROOM[{name!r}] POLICY is invalid: {exc}"
+        raise ImproperlyConfigured(msg) from exc
+
     return WaitingRoomConfig(
         name=name,
         secret_key=secret,
         target_url=target,
-        capacity=int(raw.get("CAPACITY", 5_000)),
+        capacity=capacity,
         token_ttl_seconds=int(raw.get("TOKEN_TTL_SECONDS", 300)),
         queued_session_ttl_seconds=int(raw.get("QUEUED_SESSION_TTL_SECONDS", 1_800)),
         admission_grace_seconds=int(raw.get("ADMISSION_GRACE_SECONDS", 60)),
         storage=_coerce_redis(raw.get("REDIS")),
-        policy=_coerce_policy(raw.get("POLICY")),
+        policy=policy,
         failure_mode=_coerce_failure_mode(raw.get("FAILURE_MODE")),
         allowlist_ips=tuple(raw.get("ALLOWLIST_IPS") or ()),
         allowlist_user_ids=tuple(raw.get("ALLOWLIST_USER_IDS") or ()),
