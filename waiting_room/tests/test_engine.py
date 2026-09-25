@@ -268,3 +268,36 @@ def test_fail_open_ticket_is_bound_to_caller(make_room) -> None:
     assert ticket is not None
     verified = room._signer.verify(ticket.token, fingerprint=room._fingerprint("1.2.3.4", "ua"))
     assert verified.session_id == "a" * 32
+
+
+def test_status_polling_admits_the_front_of_the_queue(make_room) -> None:
+    room = make_room(admit_per_second=100, capacity=10)
+    s, _ = room.enqueue(ip="1.2.3.4", user_agent="ua")
+    payload = room.status_payload(s.session_id)
+    assert payload["ready"] is True
+    assert room.try_admit(s.session_id) is not None
+
+
+def test_status_polling_ticks_are_throttled(make_room) -> None:
+    room = make_room()
+    calls: list[int] = []
+    original = room._storage.admit_batch
+
+    def _counting(*args: object, **kwargs: object) -> list[str]:
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    room._storage.admit_batch = _counting
+    s, _ = room.enqueue(ip="1.2.3.4", user_agent="ua")
+    room.status_payload(s.session_id)
+    room.status_payload(s.session_id)
+    assert len(calls) == 1
+
+
+def test_status_reports_closed_room(make_room) -> None:
+    room = make_room(admit_per_second=0.001, capacity=0)
+    s, _ = room.enqueue(ip="1.2.3.4", user_agent="ua")
+    room.set_kill_switch(engaged=True)
+    payload = room.status_payload(s.session_id)
+    assert payload["closed"] is True
+    assert payload["ready"] is False

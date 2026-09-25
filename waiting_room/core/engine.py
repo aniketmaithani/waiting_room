@@ -63,6 +63,9 @@ _FOREIGN_SESSION = -2
 _MAX_BATCH = 1_000
 """Upper bound on sessions admitted per tick, keeping each Lua call short."""
 
+_MIN_POLL_TICK_INTERVAL = 0.2
+"""Seconds between admission ticks triggered by status polls, per engine instance."""
+
 
 def _ua_hash(user_agent: str) -> str:
     return hashlib.sha256(user_agent.encode("utf-8")).hexdigest()[:16]
@@ -153,6 +156,7 @@ class WaitingRoom:
         # Per-instance tiebreaker so rapid-fire enqueues never collide on score.
         self._seq = itertools.count()
         self._seq_lock = threading.Lock()
+        self._last_poll_tick = 0.0
 
     # ---- public API ----------------------------------------------------------
 
@@ -247,6 +251,7 @@ class WaitingRoom:
             position=snap.position,
             queue_size=snap.queue_size,
             estimated_wait_seconds=wait,
+            room_closed=snap.room_closed,
         )
 
     def try_admit(
@@ -486,6 +491,13 @@ class WaitingRoom:
         return self.config.position_stream_path
 
     def status_payload(self, session_id: str) -> Mapping[str, object]:
+        """Report a waiter's position, advancing the queue first.
+
+        Waiting pages poll this, so it doubles as the admission clock: without
+        a tick here nobody at the front would ever be admitted. Ticks are
+        throttled per instance; the storage layer enforces the real limits.
+        """
+        self._poll_tick()
         snap = self.position(session_id)
         return {
             "session_id": session_id,
@@ -493,7 +505,18 @@ class WaitingRoom:
             "queue_size": snap.queue_size,
             "estimated_wait_seconds": snap.estimated_wait_seconds,
             "ready": snap.position == 0,
+            "closed": snap.room_closed,
         }
+
+    def _poll_tick(self) -> None:
+        now = time.monotonic()
+        if now - self._last_poll_tick < _MIN_POLL_TICK_INTERVAL:
+            return
+        self._last_poll_tick = now
+        try:
+            self._tick_admit()
+        except BackendUnavailableError:
+            _log.warning("waiting_room admission tick failed: backend unavailable")
 
 
 __all__ = ["WaitingRoom"]

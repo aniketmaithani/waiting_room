@@ -108,3 +108,5 @@ class QueuePosition:
     """1-indexed position. ``0`` means already admitted; ``-1`` means unknown."""
     queue_size: int
     estimated_wait_seconds: float | None
+    room_closed: bool = False
+    """True while the room's kill switch is engaged (nobody is being admitted)."""

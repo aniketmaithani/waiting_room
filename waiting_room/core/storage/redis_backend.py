@@ -149,12 +149,13 @@ class RedisStorageBackend(StorageBackend):
 
     def position(self, room: str, session_id: str, *, ttl_seconds: int = 0) -> QueuePosition:
         try:
-            pos, size, admitted = self._scripts["position"](
+            pos, size, admitted, closed = self._scripts["position"](
                 keys=[
                     self._queue_key(room),
                     self._admitted_key(room),
                     self._seen_key(room),
                     self._session_key(room, session_id),
+                    self._killswitch_key(room),
                 ],
                 args=[session_id, int(time.time()), int(ttl_seconds)],
             )
@@ -163,7 +164,12 @@ class RedisStorageBackend(StorageBackend):
         pos = int(pos)
         if pos <= 0:
             pos = 0 if int(admitted) else -1
-        return QueuePosition(position=pos, queue_size=int(size), estimated_wait_seconds=None)
+        return QueuePosition(
+            position=pos,
+            queue_size=int(size),
+            estimated_wait_seconds=None,
+            room_closed=bool(int(closed)),
+        )
 
     def queue_size(self, room: str) -> int:
         try:
