@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand, CommandError
 
 from waiting_room.adapters.django.registry import get_room
+from waiting_room.core.exceptions import BackendUnavailableError
 
 
 class Command(BaseCommand):
@@ -28,17 +30,16 @@ class Command(BaseCommand):
         if not options.get("yes"):
             raise CommandError("Refusing to flush without --yes.")
         room_name = str(options["room"])
-        room = get_room(room_name)
-        # The storage backend exposes the keys used by this room; we don't
-        # introduce a new public API to delete them, so we touch the internals.
-        backend = room._storage
-        client = getattr(backend, "_client", None)
-        if client is None:
-            raise CommandError("storage backend has no Redis client to flush")
-        prefix = f"{backend._prefix}:{{{room_name}}}:"
-        keys = list(client.scan_iter(match=prefix + "*"))
-        if not keys:
+        try:
+            room = get_room(room_name)
+        except ImproperlyConfigured as exc:
+            raise CommandError(str(exc)) from exc
+        try:
+            removed = room.flush()
+        except BackendUnavailableError as exc:
+            msg = f"{room_name}: storage backend unavailable: {exc}"
+            raise CommandError(msg) from exc
+        if not removed:
             self.stdout.write(f"{room_name}: nothing to flush.")
             return
-        client.delete(*keys)
-        self.stdout.write(self.style.WARNING(f"{room_name}: flushed {len(keys)} keys."))
+        self.stdout.write(self.style.WARNING(f"{room_name}: flushed {removed} keys."))

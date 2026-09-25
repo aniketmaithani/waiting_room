@@ -22,17 +22,11 @@ class Command(BaseCommand):
         self.stdout.write(header)
         self.stdout.write("-" * len(header))
         for name, room in rooms.items():
-            try:
-                queue = room._safe_queue_size()
-                admitted = room._safe_admitted_count()
-                killed = "YES" if room.is_kill_switch_engaged() else "no"
-                ok = "yes" if room.healthcheck() else "NO"
-            except Exception as exc:
-                self.stdout.write(self.style.ERROR(f"{name}: {exc}"))
-                continue
+            stats = room.stats()
+            killed = "YES" if stats.kill_switch_engaged else "no"
             line = (
-                f"{name:<24} {queue:>8} {admitted:>10} "
-                f"{room.config.capacity:>10} {killed:>6} {ok:>5}"
+                f"{name:<24} {stats.queue_size:>8} {stats.admitted:>10} "
+                f"{stats.capacity or 'inf':>10} {killed:>6} {'yes' if stats.healthy else 'NO':>5}"
             )
-            style = self.style.ERROR if killed == "YES" else self.style.SUCCESS
-            self.stdout.write(style(line))
+            style = self.style.ERROR if stats.kill_switch_engaged or not stats.healthy else None
+            self.stdout.write(style(line) if style else self.style.SUCCESS(line))

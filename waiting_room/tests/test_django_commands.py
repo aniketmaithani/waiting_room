@@ -71,8 +71,13 @@ def test_flush_requires_yes(cmd_room: WaitingRoom) -> None:
 
 
 def test_flush_drops_keys(cmd_room: WaitingRoom) -> None:
-    cmd_room.enqueue(ip="1", user_agent="ua")
-    assert cmd_room._safe_queue_size() == 1
+    cmd_room.enqueue(ip="1.1.1.1", user_agent="ua")
+    assert cmd_room.stats().queue_size == 1
     buf = StringIO()
     call_command("waiting_room_flush", "cmd", "--yes", stdout=buf)
-    assert cmd_room._safe_queue_size() == 0
+    assert cmd_room.stats().queue_size == 0
+
+
+def test_reclaim_unknown_room_errors() -> None:
+    with pytest.raises(CommandError):
+        call_command("waiting_room_reclaim", "--room", "nope")

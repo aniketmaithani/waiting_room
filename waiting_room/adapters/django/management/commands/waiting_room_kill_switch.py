@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand, CommandError
 
 from waiting_room.adapters.django.registry import get_room
@@ -25,7 +26,7 @@ class Command(BaseCommand):
         state = str(options["state"])
         try:
             room = get_room(room_name)
-        except Exception as exc:
+        except ImproperlyConfigured as exc:
             raise CommandError(str(exc)) from exc
 
         engaged = state == "on"
