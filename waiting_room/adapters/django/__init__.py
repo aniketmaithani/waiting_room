@@ -10,11 +10,13 @@ Public API:
 * ``waiting_room_protect`` — decorator for individual views
 * ``WaitingRoomMiddleware`` — protects whole URL prefixes
 * ``get_room`` — fetch the configured ``WaitingRoom`` engine instance
+* ``release_admission`` — free the caller's slot once the protected flow is done
 * ``waiting_room_event`` — Django ``Signal`` fired on every lifecycle event
 """
 
 from waiting_room.adapters.django.decorators import waiting_room_protect
 from waiting_room.adapters.django.registry import get_room
+from waiting_room.adapters.django.release import release_admission
 from waiting_room.adapters.django.signals import waiting_room_event
 
 # default_app_config is deprecated since Django 3.2 — Django auto-discovers
@@ -25,6 +27,7 @@ default_app_config = "waiting_room.adapters.django.apps.WaitingRoomConfig"
 __all__ = [
     "default_app_config",
     "get_room",
+    "release_admission",
     "waiting_room_event",
     "waiting_room_protect",
 ]

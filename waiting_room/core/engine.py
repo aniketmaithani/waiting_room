@@ -208,8 +208,10 @@ class WaitingRoom:
     ) -> tuple[Session, QueuePosition]:
         """Place a caller in the queue. Idempotent for an existing session id.
 
-        Raises ``RateLimitedError`` when ``ip`` exceeds its enqueue budget and
-        ``KillSwitchEngagedError`` when the room is closed.
+        Raises ``RateLimitedError`` when ``ip`` exceeds its enqueue budget,
+        ``KillSwitchEngagedError`` when the room is closed, and
+        ``BackendUnavailableError`` when storage is down (callers apply the
+        room's failure mode, since only they can let the request through).
         """
         fp = Fingerprint(ip=ip, user_agent_hash=_ua_hash(user_agent))
         if not is_valid_session_id(existing_session_id):
@@ -234,7 +236,8 @@ class WaitingRoom:
                 session.session_id = Session().session_id
                 position = self._store_session(session)
         except BackendUnavailableError:
-            return self._handle_backend_unavailable(session)
+            _log.warning("waiting_room %s: storage backend unavailable", self.config.name)
+            raise
 
         if position == _KILL_SWITCH:
             self._emitter.emit(EventType.REJECTED, {"reason": "kill_switch", "ip": ip})
@@ -459,16 +462,6 @@ class WaitingRoom:
         if rate <= 0:
             return None
         return max(0.0, position / rate)
-
-    def _handle_backend_unavailable(
-        self,
-        session: Session,
-    ) -> tuple[Session, QueuePosition]:
-        _log.warning("waiting_room backend unavailable, applying %s", self.config.failure_mode)
-        if self.config.failure_mode is FailureMode.FAIL_OPEN:
-            session.state = SessionState.ADMITTED
-            return session, QueuePosition(position=0, queue_size=0, estimated_wait_seconds=0.0)
-        raise BackendUnavailableError("storage backend is unreachable")
 
     def _mint_open_ticket(
         self,

@@ -23,7 +23,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_safe
 
-from waiting_room.adapters.django.middleware import attach_admission_cookie
+from waiting_room.adapters.django._gate import set_room_cookie, token_cookie_name
 from waiting_room.adapters.django.registry import all_rooms, get_room
 from waiting_room.core.exceptions import (
     BackendUnavailableError,
@@ -141,11 +141,12 @@ def admit_callback(request: HttpRequest) -> HttpResponse:
 
     next_url = request.POST.get("next") or room.config.target_url
     response = JsonResponse({"ready": True, "redirect": next_url})
-    return attach_admission_cookie(
+    return set_room_cookie(
         response,
         room=room,
-        token=ticket.token,
-        ttl=int(ticket.ttl_seconds),
+        name=token_cookie_name(room),
+        value=ticket.token,
+        max_age=int(ticket.ttl_seconds),
     )
 
 
