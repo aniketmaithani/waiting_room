@@ -87,7 +87,12 @@ class StorageBackend(ABC):
 
 
 class TokenSigner(ABC):
-    """Mints and validates short-lived admission tokens."""
+    """Mints and validates short-lived, purpose-scoped admission tokens.
+
+    ``purpose`` separates token kinds signed with the same key: the engine
+    uses ``"admit"`` for the single-use ticket handed out of the queue and
+    ``"pass"`` for the reusable credential an admitted user carries.
+    """
 
     @abstractmethod
     def issue(
@@ -97,15 +102,22 @@ class TokenSigner(ABC):
         room: str,
         fingerprint: str,
         ttl_seconds: int,
+        purpose: str = "admit",
     ) -> AdmissionTicket: ...
 
     @abstractmethod
-    def verify(self, token: str, *, fingerprint: str) -> AdmissionTicket:
-        """Validate signature, expiry, and fingerprint binding. Raises on failure."""
+    def verify(
+        self,
+        token: str,
+        *,
+        fingerprint: str,
+        purpose: str = "admit",
+    ) -> AdmissionTicket:
+        """Validate signature, purpose, expiry, and fingerprint binding. Raises on failure."""
 
     @abstractmethod
     def mark_used(self, token: str) -> bool:
-        """Record single-use redemption. Returns False if already redeemed."""
+        """Record single-use redemption. Raises ``TokenAlreadyUsedError`` on reuse."""
 
 
 class AdmissionStrategy(ABC):

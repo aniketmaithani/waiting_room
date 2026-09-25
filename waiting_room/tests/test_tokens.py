@@ -8,6 +8,7 @@ import fakeredis
 import pytest
 
 from waiting_room.core.exceptions import (
+    BackendUnavailableError,
     InvalidTokenError,
     TokenAlreadyUsedError,
     TokenExpiredError,
@@ -68,5 +69,39 @@ def test_rejects_short_secret() -> None:
 
 def test_token_url_safe_and_bounded(signer: HMACTokenSigner) -> None:
     ticket = signer.issue(session_id="s" * 32, room="r" * 16, fingerprint="fp", ttl_seconds=60)
-    assert len(ticket.token) <= 256
+    assert len(ticket.token) <= 1024
     assert all(c.isalnum() or c in "-_." for c in ticket.token)
+
+
+def test_purpose_is_enforced(signer: HMACTokenSigner) -> None:
+    ticket = signer.issue(
+        session_id="s1", room="r", fingerprint="fp", ttl_seconds=60, purpose="pass"
+    )
+    assert signer.verify(ticket.token, fingerprint="fp", purpose="pass").session_id == "s1"
+    with pytest.raises(InvalidTokenError, match="purpose"):
+        signer.verify(ticket.token, fingerprint="fp")
+
+
+@pytest.mark.parametrize("token", ["", "no-dot", "!!!.???", "a.b.c", "x" * 5000])
+def test_garbage_tokens_are_invalid(signer: HMACTokenSigner, token: str) -> None:
+    with pytest.raises(InvalidTokenError):
+        signer.verify(token, fingerprint="fp")
+
+
+def test_mark_used_wraps_backend_errors() -> None:
+    import redis
+
+    class _Down(fakeredis.FakeRedis):
+        def set(self, *args: object, **kwargs: object) -> bool:
+            raise redis.ConnectionError("down")
+
+    signer = HMACTokenSigner("x" * 64, redis_client=_Down())
+    ticket = signer.issue(session_id="s1", room="r", fingerprint="fp", ttl_seconds=60)
+    with pytest.raises(BackendUnavailableError):
+        signer.mark_used(ticket.token)
+
+
+def test_long_room_names_fit() -> None:
+    signer = HMACTokenSigner("x" * 64)
+    ticket = signer.issue(session_id="a" * 32, room="r" * 128, fingerprint="fp", ttl_seconds=60)
+    assert signer.verify(ticket.token, fingerprint="fp").room == "r" * 128
