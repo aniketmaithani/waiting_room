@@ -11,9 +11,31 @@ sales, ticket drops, limited-inventory checkout) and it will:
 Built around a framework-agnostic core, with a polished **Django** adapter
 shipped today (FastAPI / Flask roadmapped).
 
-> **Status:** alpha. 55 tests passing. Core engine + Django adapter complete:
-> AppConfig, middleware, decorator, views, SSE, admin, management commands,
-> system checks, and a real migration.
+> **Status:** alpha. Core engine + Django adapter: AppConfig, middleware,
+> decorator, views, admin, management commands, system checks and migrations.
+> The test suite runs against fakeredis or a real Redis, and `mypy --strict`
+> passes.
+
+---
+
+## How it works
+
+1. A request hits a protected path without a pass → the caller is enqueued
+   (idempotently, keyed by a `wr_session` cookie) and redirected to
+   `/_waiting-room/?room=…&sid=…&next=…`.
+2. The waiting page polls `/_waiting-room/status`. Every poll also drives an
+   **admission tick**: one Lua script that frees expired slots and admits
+   people from the front of the queue within the room's rate **and**
+   capacity, atomically, across all worker processes.
+3. Once admitted, the page POSTs to `/_waiting-room/admit`, which mints a
+   **single-use, fingerprint-bound ticket** (HMAC-SHA256) as a cookie and
+   sends the browser back to the page it originally asked for.
+4. On that request the gate redeems the ticket exactly once and swaps it for a
+   **pass** cookie, which is valid for `ADMITTED_SESSION_TTL_SECONDS` and
+   bound to the same fingerprint. Every later request is checked with a pure
+   HMAC verify, with no Redis round trip.
+5. The admitted user's capacity slot is held for the pass lifetime, or until
+   you call `release_admission()` (e.g. once checkout completes).
 
 ---
 
@@ -50,15 +72,25 @@ MIDDLEWARE = [
 WAITING_ROOM = {
     "SECRET_KEY": env("WAITING_ROOM_SECRET"),       # >= 32 chars
     "TARGET_URL": "/checkout/",
+    # Admit 100/s (bursts of up to 100), never more than 5,000 at once.
     "POLICY":  {"KIND": "time_bucket", "ADMIT_PER_SECOND": 100, "BURST": 100},
-    "CAPACITY": 5_000,
+    "CAPACITY": 5_000,                # 0 = rate only
     "REDIS":   {"URL": env("REDIS_URL"), "KEY_PREFIX": "wr"},
+
+    # How long an admitted user keeps access (and their capacity slot).
+    "ADMITTED_SESSION_TTL_SECONDS": 900,
+    # Time an admitted user has to arrive before their slot goes to the next person.
+    "ADMISSION_GRACE_SECONDS": 60,
+
+    # Number of reverse proxies that append to X-Forwarded-For. 0 (default)
+    # ignores the header, since clients can forge it.
+    "TRUSTED_PROXY_COUNT": 1,
 
     # Routes that should be gated by a waiting room. Tuple of (prefix, room_name).
     "PROTECT": [("/checkout/", "default")],
 
-    # VIPs that bypass the queue.
-    "ALLOWLIST_IPS": ["10.0.0.5"],
+    # VIPs that bypass the queue (IPs or CIDR networks).
+    "ALLOWLIST_IPS": ["10.0.0.5", "192.168.0.0/16"],
     "ALLOWLIST_USER_IDS": ["1", "42"],
 
     # When True, lifecycle events are persisted to AdmissionEvent.
@@ -98,8 +130,20 @@ python manage.py check                   # warns about misconfiguration
 python manage.py waiting_room_status     # live queue / admitted counts
 ```
 
-That's it. Hit `/checkout/` with no token and you'll be redirected to a
-waiting page that updates over Server-Sent Events.
+That's it. Hit `/checkout/` without a pass and you'll be redirected to a
+waiting page that polls for its position and sends you through when it's your
+turn.
+
+### 7. Release slots when the flow is done (recommended)
+
+```python
+from waiting_room.adapters.django import release_admission
+
+def order_complete(request):
+    response = render(request, "thanks.html")
+    release_admission(request, response, "default")   # next person gets in sooner
+    return response
+```
 
 ---
 
@@ -131,7 +175,7 @@ WAITING_ROOM = {
         "tickets": {
             "SECRET_KEY": env("WR_TICKETS_SECRET"),
             "TARGET_URL": "/tickets/buy/",
-            "POLICY": {"KIND": "capacity_aware"},
+            "POLICY": {"KIND": "capacity_aware"},   # uses the room's CAPACITY
             "CAPACITY": 500,
         },
     },
@@ -145,8 +189,9 @@ WAITING_ROOM = {
 
 `/admin/waiting_room/` ships with two pages:
 
-- **Admission events** — read-only audit log (filterable by room / event type / date)
-- **Room status** — live queue + admitted counts per room with a kill-switch toggle button
+- **Admission events**: read-only audit log (filterable by room / event type / date)
+- **Room status**: live queue + admitted counts per room with a kill-switch
+  toggle. Toggling requires the `waiting_room.change_roomstatus` permission.
 
 ---
 
@@ -159,7 +204,10 @@ WAITING_ROOM = {
 | `python manage.py waiting_room_reclaim [--room <name>]` | Sweep abandoned/expired sessions back to the free pool |
 | `python manage.py waiting_room_flush <room> --yes` | Drop all queue and admitted state for a room (incident recovery) |
 
-Schedule `waiting_room_reclaim` from cron / Celery Beat to keep abandoned slots from leaking.
+Expired admission slots are freed automatically on every admission tick.
+Scheduling `waiting_room_reclaim` from cron / Celery Beat is optional
+housekeeping: it also drops waiters who stopped polling for
+`QUEUED_SESSION_TTL_SECONDS`.
 
 ---
 
@@ -197,7 +245,7 @@ waiting_room/
 ├── core/                # framework-agnostic engine
 │   ├── engine.py        # WaitingRoom facade
 │   ├── tokens.py        # HMAC-SHA256 admission tokens (single-use, fp-bound)
-│   ├── strategies.py    # TimeBucket, CapacityAware, Composite
+│   ├── strategies.py    # optional extra per-process caps
 │   ├── storage/         # Redis backend (cluster-safe via {room} hash tag)
 │   ├── lua/             # atomic Lua scripts (enqueue, admit_batch, reclaim, ...)
 │   ├── ratelimit.py
@@ -208,9 +256,11 @@ waiting_room/
 │   ├── apps.py          # AppConfig (auto-builds rooms on startup)
 │   ├── conf.py          # reads settings.WAITING_ROOM
 │   ├── checks.py        # manage.py check integration
+│   ├── _gate.py         # admission gate shared by middleware + decorator
 │   ├── middleware.py
 │   ├── decorators.py
-│   ├── views.py         # waiting page, SSE stream, status, admit, health
+│   ├── release.py       # release_admission() helper
+│   ├── views.py         # waiting page, status, SSE stream, admit, health
 │   ├── models.py        # AdmissionEvent (audit log)
 │   ├── migrations/
 │   ├── admin.py         # AdmissionEvent + Room status with kill switch
@@ -225,8 +275,12 @@ waiting_room/
 
 ## Non-functional guarantees
 
-- **Atomic admissions** — ZRANGE+ZREM+ZADD+HSET happen in a single Lua script;
-  two workers never admit the same session twice.
+- **Atomic admissions**: the rate (shared token bucket), the capacity check,
+  freeing expired slots and popping the queue all happen in one Lua script,
+  so any number of workers together never exceed the configured rate or
+  capacity, or admit the same session twice.
+- **Waiters keep their place**: active waiters are kept alive by their polls;
+  only sessions that stop polling are reclaimed.
 - **Cluster-safe** — every per-room key is wrapped in `{room}` so Redis
   Cluster pins them to one slot.
 - **Plug-and-play** — `INSTALLED_APPS += ["waiting_room.adapters.django"]` +
@@ -236,9 +290,15 @@ waiting_room/
 - **Observable** — Prometheus + structlog are soft deps; no-op shims if absent.
 - **Failure modes** — `FAIL_CLOSED` (default) or `FAIL_OPEN`. Selected via the
   `FAILURE_MODE` setting.
-- **Security** — HMAC-SHA256 signing, payload fingerprint binding (IP + UA
-  hash), Redis-backed nonce store for single-use enforcement, URL-safe tokens
-  capped at 256 chars.
+- **Security**: HMAC-SHA256 tokens scoped by purpose (single-use ticket vs.
+  reusable pass) and room, bound to an IP + UA fingerprint, with a Redis nonce
+  store for single-use enforcement. `next` redirects are restricted to
+  same-site paths. `X-Forwarded-For` is only trusted behind configured
+  proxies. Session ids can't be taken over by another client. Enqueues are
+  rate limited per IP (HTTP 429).
+- **Scales with WSGI**: the waiting page polls with jittered backoff. The
+  SSE endpoint (`/_waiting-room/position`) is opt-in for ASGI deployments and
+  caps each connection at 55s.
 
 ---
 
@@ -246,8 +306,10 @@ waiting_room/
 
 ```bash
 uv pip install -e ".[dev]"
-pytest                 # 55 tests
-ruff check waiting_room/
+pytest                                   # fakeredis
+WAITING_ROOM_TEST_REDIS_URL=redis://localhost:6379/15 pytest   # real Redis (DB is flushed!)
+ruff check waiting_room/ && ruff format --check waiting_room/
+mypy waiting_room/
 ```
 
 ---
