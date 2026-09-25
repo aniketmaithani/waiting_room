@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import enum
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -12,8 +13,16 @@ def _now() -> float:
     return time.time()
 
 
+_SESSION_ID_RE = re.compile(r"[0-9a-f]{32}")
+
+
 def _new_session_id() -> str:
     return uuid.uuid4().hex
+
+
+def is_valid_session_id(value: str | None) -> bool:
+    """Return True if ``value`` has the shape of a library-issued session id."""
+    return bool(value) and _SESSION_ID_RE.fullmatch(value or "") is not None
 
 
 class SessionState(enum.StrEnum):

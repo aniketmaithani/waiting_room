@@ -104,6 +104,7 @@ class RedisStorageBackend(StorageBackend):
         score: float,
         *,
         ttl_seconds: int = 1_800,
+        check_fingerprint: bool = True,
     ) -> int:
         fp = session.fingerprint or Fingerprint("", "")
         hash_args: list[str] = [
@@ -129,12 +130,16 @@ class RedisStorageBackend(StorageBackend):
                     self._session_key(room, session.session_id),
                     self._killswitch_key(room),
                     self._seen_key(room),
+                    self._admitted_key(room),
                 ],
                 args=[
                     session.session_id,
                     repr(float(score)),
                     int(ttl_seconds),
                     int(time.time()),
+                    fp.ip,
+                    fp.user_agent_hash,
+                    "1" if check_fingerprint else "0",
                     *hash_args,
                 ],
             )

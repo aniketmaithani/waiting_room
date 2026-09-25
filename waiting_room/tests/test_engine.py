@@ -151,3 +151,43 @@ def test_reclaim_uses_idle_time_not_join_time(make_room, redis_client) -> None:
     room.position(s.session_id)  # but still polling
     assert room.reclaim() == 0
     assert room.position(s.session_id).position == 1
+
+
+def test_reenqueue_keeps_place_for_same_client(make_room) -> None:
+    room = make_room(admit_per_second=0.001, capacity=0)
+    first, _ = room.enqueue(ip="1.1.1.1", user_agent="ua")
+    room.enqueue(ip="2.2.2.2", user_agent="ua")
+    again, snap = room.enqueue(ip="1.1.1.1", user_agent="ua", existing_session_id=first.session_id)
+    assert again.session_id == first.session_id
+    assert snap.position == 1
+
+
+def test_reenqueue_with_foreign_session_id_gets_new_session(make_room) -> None:
+    room = make_room(admit_per_second=0.001, capacity=0)
+    victim, _ = room.enqueue(ip="1.1.1.1", user_agent="ua")
+    thief, snap = room.enqueue(
+        ip="6.6.6.6",
+        user_agent="evil",
+        existing_session_id=victim.session_id,
+    )
+    assert thief.session_id != victim.session_id
+    assert snap.position == 2
+    assert room.position(victim.session_id).position == 1
+
+
+@pytest.mark.parametrize("bogus", ["", "not-a-sid", "A" * 32, "x" * 500, "{other}:queue"])
+def test_malformed_session_ids_are_ignored(make_room, bogus: str) -> None:
+    room = make_room()
+    session, _ = room.enqueue(ip="1.1.1.1", user_agent="ua", existing_session_id=bogus)
+    assert session.session_id != bogus
+    assert len(session.session_id) == 32
+
+
+def test_reenqueue_of_admitted_session_does_not_requeue(make_room) -> None:
+    room = make_room(admit_per_second=100, capacity=10)
+    s, _ = room.enqueue(ip="1.1.1.1", user_agent="ua")
+    assert room.try_admit(s.session_id) is not None
+    again, snap = room.enqueue(ip="1.1.1.1", user_agent="ua", existing_session_id=s.session_id)
+    assert again.state == SessionState.ADMITTED
+    assert snap.position == 0
+    assert room.position(s.session_id).position == 0

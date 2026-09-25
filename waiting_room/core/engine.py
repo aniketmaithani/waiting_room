@@ -24,6 +24,7 @@ from waiting_room.core._types import (
     QueuePosition,
     Session,
     SessionState,
+    is_valid_session_id,
 )
 from waiting_room.core.events import InProcessEventEmitter
 from waiting_room.core.exceptions import (
@@ -53,6 +54,9 @@ if TYPE_CHECKING:
     import redis as redis_pkg
 
 _log = logging.getLogger("waiting_room.engine")
+
+_KILL_SWITCH = -1
+_FOREIGN_SESSION = -2
 
 _MAX_BATCH = 1_000
 """Upper bound on sessions admitted per tick, keeping each Lua call short."""
@@ -184,6 +188,8 @@ class WaitingRoom:
             raise BackendUnavailableError(msg)
 
         fp = Fingerprint(ip=ip, user_agent_hash=_ua_hash(user_agent))
+        if not is_valid_session_id(existing_session_id):
+            existing_session_id = None
         session = Session(
             session_id=existing_session_id or Session().session_id,
             room=self.config.name,
@@ -193,20 +199,21 @@ class WaitingRoom:
         )
 
         try:
-            score = self._next_score(session.enqueued_at)
-            position = self._storage.enqueue(
-                self.config.name,
-                session,
-                score=score,
-                ttl_seconds=self.config.queued_session_ttl_seconds,
-            )
+            position = self._store_session(session)
+            if position == _FOREIGN_SESSION:
+                # The id belongs to another client: never hand over their place.
+                session.session_id = Session().session_id
+                position = self._store_session(session)
         except BackendUnavailableError:
             return self._handle_backend_unavailable(session)
 
-        if position == -1:
+        if position == _KILL_SWITCH:
             self._emitter.emit(EventType.REJECTED, {"reason": "kill_switch", "ip": ip})
             self._metric_incr("enqueue_rejected_killswitch")
             raise KillSwitchEngagedError
+        if position == 0:
+            session.state = SessionState.ADMITTED
+            return session, QueuePosition(position=0, queue_size=0, estimated_wait_seconds=0.0)
 
         size = self._safe_queue_size()
         wait = self._estimate_wait(position)
@@ -382,6 +389,15 @@ class WaitingRoom:
             room=self.config.name,
             fingerprint="",
             ttl_seconds=self.config.token_ttl_seconds,
+        )
+
+    def _store_session(self, session: Session) -> int:
+        return self._storage.enqueue(
+            self.config.name,
+            session,
+            score=self._next_score(session.enqueued_at),
+            ttl_seconds=self.config.queued_session_ttl_seconds,
+            check_fingerprint=self.config.bind_fingerprint,
         )
 
     def _next_score(self, base: float) -> float:

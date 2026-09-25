@@ -37,10 +37,15 @@ class StorageBackend(ABC):
         score: float,
         *,
         ttl_seconds: int = 1_800,
+        check_fingerprint: bool = True,
     ) -> int:
-        """Insert ``session`` at ``score`` (idempotent). Returns its 1-indexed position.
+        """Insert ``session`` at ``score`` (idempotent) and return its 1-indexed position.
 
         Session metadata lives for ``ttl_seconds`` unless refreshed by ``position``.
+        Special results: ``0`` the session is already admitted; ``-1`` the kill
+        switch is engaged; ``-2`` the id exists but was created by a different
+        client fingerprint (only when ``check_fingerprint``), so the caller must
+        start a fresh session rather than take over someone else's place.
         """
 
     @abstractmethod
