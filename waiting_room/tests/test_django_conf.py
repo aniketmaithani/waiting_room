@@ -36,3 +36,19 @@ def test_invalid_policy_is_improperly_configured() -> None:
         pytest.raises(ImproperlyConfigured, match="POLICY"),
     ):
         load_configs()
+
+
+def test_admitted_session_ttl_and_proxies_are_read() -> None:
+    settings = _rooms(ADMITTED_SESSION_TTL_SECONDS=120, TRUSTED_PROXY_COUNT=2)
+    with override_settings(WAITING_ROOM=settings):
+        cfg = load_configs()["r"]
+    assert cfg.admitted_session_ttl_seconds == 120
+    assert cfg.trusted_proxy_count == 2
+
+
+def test_invalid_room_values_are_improperly_configured() -> None:
+    with (
+        override_settings(WAITING_ROOM=_rooms(ALLOWLIST_IPS=["not-an-ip"])),
+        pytest.raises(ImproperlyConfigured, match="allowlist_ips"),
+    ):
+        load_configs()

@@ -58,6 +58,7 @@ def _coerce_redis(raw: Mapping[str, Any] | None) -> RedisConfig:
         url=str(raw.get("URL", getattr(settings, "REDIS_URL", "redis://localhost:6379/0"))),
         socket_timeout=float(raw.get("SOCKET_TIMEOUT", 1.0)),
         socket_connect_timeout=float(raw.get("SOCKET_CONNECT_TIMEOUT", 1.0)),
+        health_check_interval=int(raw.get("HEALTH_CHECK_INTERVAL", 30)),
         max_connections=int(raw.get("MAX_CONNECTIONS", 64)),
         key_prefix=str(raw.get("KEY_PREFIX", "wr")),
     )
@@ -89,6 +90,22 @@ def _build_one(name: str, raw: Mapping[str, Any]) -> WaitingRoomConfig:
         msg = f"WAITING_ROOM[{name!r}] POLICY is invalid: {exc}"
         raise ImproperlyConfigured(msg) from exc
 
+    try:
+        return _config(name, raw, secret=secret, target=target, capacity=capacity, policy=policy)
+    except (TypeError, ValueError) as exc:
+        msg = f"WAITING_ROOM[{name!r}] is invalid: {exc}"
+        raise ImproperlyConfigured(msg) from exc
+
+
+def _config(
+    name: str,
+    raw: Mapping[str, Any],
+    *,
+    secret: str,
+    target: str,
+    capacity: int,
+    policy: AdmissionPolicy,
+) -> WaitingRoomConfig:
     return WaitingRoomConfig(
         name=name,
         secret_key=secret,
@@ -97,6 +114,7 @@ def _build_one(name: str, raw: Mapping[str, Any]) -> WaitingRoomConfig:
         token_ttl_seconds=int(raw.get("TOKEN_TTL_SECONDS", 300)),
         queued_session_ttl_seconds=int(raw.get("QUEUED_SESSION_TTL_SECONDS", 1_800)),
         admission_grace_seconds=int(raw.get("ADMISSION_GRACE_SECONDS", 60)),
+        admitted_session_ttl_seconds=int(raw.get("ADMITTED_SESSION_TTL_SECONDS", 900)),
         storage=_coerce_redis(raw.get("REDIS")),
         policy=policy,
         failure_mode=_coerce_failure_mode(raw.get("FAILURE_MODE")),
