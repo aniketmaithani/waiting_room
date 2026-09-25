@@ -11,16 +11,19 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from django.contrib import admin, messages
-from django.http import HttpResponseRedirect
+from django.core.exceptions import ImproperlyConfigured, PermissionDenied
+from django.http import Http404, HttpResponse, HttpResponseRedirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils.html import format_html
+from django.views.decorators.http import require_POST
 
 from waiting_room.adapters.django.models import AdmissionEvent, RoomStatus
 from waiting_room.adapters.django.registry import all_rooms, get_room
 
 if TYPE_CHECKING:
     from django.http import HttpRequest
+    from django.urls import URLPattern, URLResolver
 
 
 @admin.register(AdmissionEvent)
@@ -74,38 +77,35 @@ class RoomStatusAdmin(admin.ModelAdmin):
     ) -> bool:
         return False
 
-    def get_urls(self):
+    def get_urls(self) -> list[URLPattern | URLResolver]:
         urls = super().get_urls()
         custom = [
             path(
                 "<str:room_name>/toggle-killswitch/",
-                self.admin_site.admin_view(self.toggle_killswitch),
+                self.admin_site.admin_view(require_POST(self.toggle_killswitch)),
                 name="waiting_room_toggle_killswitch",
             ),
         ]
         return custom + urls
 
-    def changelist_view(self, request: HttpRequest, extra_context=None):
+    def changelist_view(
+        self,
+        request: HttpRequest,
+        extra_context: dict[str, object] | None = None,
+    ) -> HttpResponse:
+        if not self.has_view_permission(request):
+            raise PermissionDenied
         rooms_view = []
         for name, room in all_rooms().items():
-            try:
-                queue_size = room._safe_queue_size()
-                admitted = room._safe_admitted_count()
-                killed = room.is_kill_switch_engaged()
-                ok = room.healthcheck()
-            except Exception as exc:
-                queue_size = admitted = 0
-                killed = False
-                ok = False
-                messages.error(request, f"room {name}: {exc}")
+            stats = room.stats()
             rooms_view.append(
                 {
                     "name": name,
-                    "queue_size": queue_size,
-                    "admitted": admitted,
-                    "capacity": room.config.capacity,
-                    "killed": killed,
-                    "healthy": ok,
+                    "queue_size": stats.queue_size,
+                    "admitted": stats.admitted,
+                    "capacity": stats.capacity or "∞",
+                    "killed": stats.kill_switch_engaged,
+                    "healthy": stats.healthy,
                     "toggle_url": reverse(
                         "admin:waiting_room_toggle_killswitch",
                         args=[name],
@@ -121,13 +121,22 @@ class RoomStatusAdmin(admin.ModelAdmin):
             ctx.update(extra_context)
         return TemplateResponse(request, self.change_list_template, ctx)
 
-    def toggle_killswitch(self, request: HttpRequest, room_name: str):
-        room = get_room(room_name)
-        currently = room.is_kill_switch_engaged()
-        room.set_kill_switch(engaged=not currently)
-        verb = "engaged" if not currently else "released"
+    def toggle_killswitch(self, request: HttpRequest, room_name: str) -> HttpResponse:
+        """Flip a room's kill switch. POST only; needs ``change_roomstatus``."""
+        if not request.user.has_perm("waiting_room.change_roomstatus"):
+            raise PermissionDenied
+        try:
+            room = get_room(room_name)
+        except ImproperlyConfigured as exc:
+            raise Http404(str(exc)) from exc
+        engage = not room.is_kill_switch_engaged()
+        room.set_kill_switch(engaged=engage)
         messages.success(
             request,
-            format_html("Kill switch <b>{}</b> for room <b>{}</b>.", verb, room_name),
+            format_html(
+                "Kill switch <b>{}</b> for room <b>{}</b>.",
+                "engaged" if engage else "released",
+                room_name,
+            ),
         )
         return HttpResponseRedirect(reverse("admin:waiting_room_roomstatus_changelist"))
