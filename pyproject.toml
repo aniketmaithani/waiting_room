@@ -52,6 +52,7 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/aniketmaithani/waiting_room"
 Issues = "https://github.com/aniketmaithani/waiting_room/issues"
+Changelog = "https://github.com/aniketmaithani/waiting_room/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["waiting_room"]
@@ -65,6 +66,7 @@ include = [
   "waiting_room/**/*.lua",
   "waiting_room/**/*.html",
   "README.md",
+  "CHANGELOG.md",
   "LICENSE",
 ]
 

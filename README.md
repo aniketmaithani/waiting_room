@@ -14,7 +14,7 @@ shipped today (FastAPI / Flask roadmapped).
 > **Status:** alpha. Core engine + Django adapter: AppConfig, middleware,
 > decorator, views, admin, management commands, system checks and migrations.
 > The test suite runs against fakeredis or a real Redis, and `mypy --strict`
-> passes.
+> passes. See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ---
 
