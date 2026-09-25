@@ -49,3 +49,16 @@ class AdmissionEvent(models.Model):
     def __str__(self) -> str:
         ts = self.created_at.strftime("%Y-%m-%d %H:%M:%S") if self.created_at else "?"
         return f"[{self.room}] {self.event_type} {self.session_id} @ {ts}"
+
+
+class RoomStatus(AdmissionEvent):
+    """Proxy that mounts the live room ops page in the admin (no table of its own).
+
+    Its ``change_roomstatus`` permission gates the kill-switch toggle.
+    """
+
+    class Meta:
+        proxy = True
+        app_label = "waiting_room"
+        verbose_name = "Room status"
+        verbose_name_plural = "Room status"

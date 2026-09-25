@@ -1,10 +1,9 @@
 """Django admin: read-only audit log + per-room kill-switch toggles.
 
 The audit log is the standard ``ModelAdmin`` for ``AdmissionEvent``. The
-kill-switch + queue overview live on a separate admin URL we register, since
-they aren't backed by a model — they read live from Redis. We mount that ops
-page using a proxy of ``AdmissionEvent`` so it shows up under the
-``waiting_room`` app section in the admin index.
+kill-switch + queue overview read live from Redis; they are mounted on the
+``RoomStatus`` proxy model so they show up under the ``waiting_room`` app
+section in the admin index.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils.html import format_html
 
-from waiting_room.adapters.django.models import AdmissionEvent
+from waiting_room.adapters.django.models import AdmissionEvent, RoomStatus
 from waiting_room.adapters.django.registry import all_rooms, get_room
 
 if TYPE_CHECKING:
@@ -50,16 +49,6 @@ class AdmissionEventAdmin(admin.ModelAdmin):
         obj: AdmissionEvent | None = None,
     ) -> bool:
         return False
-
-
-class RoomStatus(AdmissionEvent):  # type: ignore[misc, valid-type]
-    """Proxy model used purely to mount the ops view under the waiting_room admin app."""
-
-    class Meta:
-        proxy = True
-        app_label = "waiting_room"
-        verbose_name = "Room status"
-        verbose_name_plural = "Room status"
 
 
 @admin.register(RoomStatus)
