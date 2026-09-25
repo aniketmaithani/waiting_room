@@ -92,7 +92,12 @@ class WaitingRoomConfig:
     """Where to redirect users once admitted."""
 
     capacity: int = 5_000
-    """Maximum concurrent admitted sessions. Used by capacity-aware admission."""
+    """Maximum concurrent admitted sessions for ``time_bucket`` (``0`` = rate only).
+
+    Combined with a ``time_bucket`` policy this gives "both": a steady drip that
+    never exceeds the downstream capacity. ``capacity_aware`` policies carry
+    their own capacity instead.
+    """
 
     token_ttl_seconds: int = 300
     """How long an issued admission token remains valid."""
@@ -141,9 +146,16 @@ class WaitingRoomConfig:
         if len(self.secret_key) < 32:
             msg = "WaitingRoomConfig.secret_key must be at least 32 chars"
             raise ValueError(msg)
-        if not self.target_url.startswith("/"):
+        if not self.target_url.startswith("/") or self.target_url.startswith("//"):
             msg = "target_url must be an absolute path beginning with '/'"
             raise ValueError(msg)
+        if self.capacity < 0:
+            msg = "capacity must be >= 0"
+            raise ValueError(msg)
+        for attr in ("token_ttl_seconds", "queued_session_ttl_seconds", "admission_grace_seconds"):
+            if getattr(self, attr) <= 0:
+                msg = f"{attr} must be > 0"
+                raise ValueError(msg)
 
 
 __all__ = [

@@ -55,3 +55,8 @@ def test_invalid_rate_raises() -> None:
 def test_composite_requires_at_least_one() -> None:
     with pytest.raises(ValueError, match="at least one"):
         CompositeAdmission()
+
+
+def test_time_bucket_below_one_per_second_admits() -> None:
+    s = TimeBucketAdmission(admit_per_second=0.5)
+    assert s.slots_available(queue_size=10, admitted=0, capacity=0) == 1

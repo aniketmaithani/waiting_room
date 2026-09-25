@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from waiting_room.core._types import (
+    AdmissionLimits,
     AdmissionTicket,
     EventType,
     Fingerprint,
@@ -41,17 +42,11 @@ from waiting_room.core.interfaces import (
 from waiting_room.core.metrics import default_metrics
 from waiting_room.core.ratelimit import NoopRateLimiter, RedisRateLimiter
 from waiting_room.core.settings import (
-    AdmissionPolicy,
     FailureMode,
     WaitingRoomConfig,
     _PolicyKind,
 )
 from waiting_room.core.storage.redis_backend import RedisStorageBackend
-from waiting_room.core.strategies import (
-    CapacityAwareAdmission,
-    CompositeAdmission,
-    TimeBucketAdmission,
-)
 from waiting_room.core.tokens import HMACTokenSigner
 
 if TYPE_CHECKING:
@@ -59,18 +54,33 @@ if TYPE_CHECKING:
 
 _log = logging.getLogger("waiting_room.engine")
 
+_MAX_BATCH = 1_000
+"""Upper bound on sessions admitted per tick, keeping each Lua call short."""
+
 
 def _ua_hash(user_agent: str) -> str:
     return hashlib.sha256(user_agent.encode("utf-8")).hexdigest()[:16]
 
 
-def _build_strategy(policy: AdmissionPolicy) -> AdmissionStrategy:
-    if policy.kind is _PolicyKind.TIME_BUCKET:
-        return TimeBucketAdmission(policy.admit_per_second, burst=policy.burst)
+def _admission_limits(config: WaitingRoomConfig) -> AdmissionLimits:
+    """Translate the configured policy into limits the storage layer enforces.
+
+    ``time_bucket`` admits at a steady rate *and* respects ``config.capacity``
+    (set it to ``0`` for rate-only). ``capacity_aware`` admits whenever a slot
+    is free, using the policy's capacity.
+    """
+    policy = config.policy
     if policy.kind is _PolicyKind.CAPACITY_AWARE:
-        return CapacityAwareAdmission()
-    msg = f"unknown policy kind {policy.kind!r}"
-    raise ValueError(msg)
+        return AdmissionLimits(
+            capacity=policy.capacity,
+            grace_seconds=config.admission_grace_seconds,
+        )
+    return AdmissionLimits(
+        capacity=config.capacity,
+        rate_per_second=policy.admit_per_second,
+        burst=policy.burst,
+        grace_seconds=config.admission_grace_seconds,
+    )
 
 
 def _build_redis_client(url: str, **kwargs: object) -> redis_pkg.Redis:
@@ -112,10 +122,10 @@ class WaitingRoom:
             client,  # type: ignore[arg-type]
             key_prefix=config.storage.key_prefix,
         )
-        self._strategy: AdmissionStrategy = strategy or _build_strategy(config.policy)
-        if config.policy.kind is _PolicyKind.TIME_BUCKET and config.capacity > 0:
-            # Compose with capacity so a time-bucket strategy still respects the cap.
-            self._strategy = CompositeAdmission(self._strategy, CapacityAwareAdmission())
+        # Built-in limits are enforced atomically by the storage backend. An
+        # injected strategy can only narrow them further, never widen them.
+        self._limits = _admission_limits(config)
+        self._strategy = strategy
         self._signer: TokenSigner = token_signer or HMACTokenSigner(
             config.secret_key,
             redis_client=client,
@@ -147,6 +157,11 @@ class WaitingRoom:
     @property
     def emitter(self) -> EventEmitter:
         return self._emitter
+
+    @property
+    def effective_capacity(self) -> int:
+        """Concurrent admission cap actually enforced (``0`` means unlimited)."""
+        return self._limits.capacity
 
     def is_allowlisted(self, *, ip: str, user_id: str | None) -> bool:
         if ip and ip in self.config.allowlist_ips:
@@ -303,17 +318,20 @@ class WaitingRoom:
 
     # ---- internals -----------------------------------------------------------
 
-    def _tick_admit(self) -> list[Session]:
-        size = self._safe_queue_size()
-        admitted = self._safe_admitted_count()
-        slots = self._strategy.slots_available(
-            queue_size=size,
-            admitted=admitted,
-            capacity=self.config.capacity,
-        )
-        if slots <= 0:
-            return []
-        return self._storage.admit_batch(self.config.name, slots)
+    def _tick_admit(self) -> list[str]:
+        max_n = _MAX_BATCH
+        if self._strategy is not None:
+            max_n = min(
+                max_n,
+                self._strategy.slots_available(
+                    queue_size=self._safe_queue_size(),
+                    admitted=self._safe_admitted_count(),
+                    capacity=self._limits.capacity,
+                ),
+            )
+            if max_n <= 0:
+                return []
+        return self._storage.admit_batch(self.config.name, max_n, limits=self._limits)
 
     def _safe_queue_size(self) -> int:
         try:

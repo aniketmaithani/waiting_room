@@ -1,7 +1,10 @@
-"""Built-in admission strategies.
+"""Optional, in-process admission strategies.
 
-The engine ticks the strategy and asks: ``slots_available(...)``. The strategy
-returns the number of sessions to pop from the queue this tick.
+The configured ``AdmissionPolicy`` (rate and capacity) is always enforced
+atomically by the storage backend, which is what keeps limits correct across
+many worker processes. A strategy passed to ``WaitingRoom(strategy=...)`` is an
+extra, per-process cap on top: the engine asks ``slots_available(...)`` and
+never admits more than it returns.
 """
 
 from __future__ import annotations
@@ -16,10 +19,8 @@ class TimeBucketAdmission(AdmissionStrategy):
     """Token-bucket-style time-based admission.
 
     Admits up to ``admit_per_second`` sessions per second on average, with an
-    optional ``burst`` allowance. Thread-safe — the same instance can serve
-    many concurrent ticks across worker threads/processes (within one process).
-    Across processes, capacity divergence is bounded by the storage layer's
-    atomic ``admit_batch``.
+    optional ``burst`` allowance. Thread-safe within one process; the rate is
+    per process, so prefer the storage-enforced policy for global limits.
     """
 
     def __init__(self, admit_per_second: float, *, burst: int = 0) -> None:
@@ -27,7 +28,8 @@ class TimeBucketAdmission(AdmissionStrategy):
             msg = "admit_per_second must be > 0"
             raise ValueError(msg)
         self._rate = float(admit_per_second)
-        self._capacity = float(max(burst, admit_per_second))
+        # At least one whole token, or rates below 1/s would never admit anyone.
+        self._capacity = float(max(burst, admit_per_second, 1))
         self._tokens = self._capacity
         self._last = time.monotonic()
         self._lock = threading.Lock()

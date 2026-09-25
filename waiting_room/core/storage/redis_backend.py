@@ -5,7 +5,8 @@ keys on the same hash slot):
 
 * ``<prefix>:{<room>}:queue``       — sorted set, score=enqueued_at_ms
 * ``<prefix>:{<room>}:session:<id>``— hash with metadata, EXPIRE applied
-* ``<prefix>:{<room>}:admitted``    — sorted set, score=grace_deadline_ms
+* ``<prefix>:{<room>}:admitted``    — sorted set, score=slot_deadline_ms
+* ``<prefix>:{<room>}:bucket``      — hash, shared admission token bucket
 * ``<prefix>:{<room>}:killswitch``  — string ``"1"`` when engaged
 
 All multi-step mutations go through Lua scripts loaded from
@@ -20,6 +21,7 @@ from importlib import resources
 from typing import TYPE_CHECKING, Any
 
 from waiting_room.core._types import (
+    AdmissionLimits,
     Fingerprint,
     QueuePosition,
     Session,
@@ -82,6 +84,9 @@ class RedisStorageBackend(StorageBackend):
 
     def _admitted_key(self, room: str) -> str:
         return f"{self._room_ns(room)}:admitted"
+
+    def _bucket_key(self, room: str) -> str:
+        return f"{self._room_ns(room)}:bucket"
 
     def _killswitch_key(self, room: str) -> str:
         return f"{self._room_ns(room)}:killswitch"
@@ -146,33 +151,30 @@ class RedisStorageBackend(StorageBackend):
         except _redis_errors() as exc:
             raise BackendUnavailableError(str(exc)) from exc
 
-    def admit_batch(self, room: str, n: int) -> list[Session]:
+    def admit_batch(self, room: str, n: int, *, limits: AdmissionLimits) -> list[str]:
         if n <= 0:
             return []
-        admitted_at = _now_ms()
-        # 60s grace by default; the engine overrides via reclaim_expired with its own value.
-        grace_deadline = admitted_at + 60_000
         try:
             sids = self._scripts["admit_batch"](
-                keys=[self._queue_key(room), self._admitted_key(room)],
+                keys=[
+                    self._queue_key(room),
+                    self._admitted_key(room),
+                    self._bucket_key(room),
+                    self._killswitch_key(room),
+                ],
                 args=[
                     int(n),
-                    admitted_at,
-                    grace_deadline,
+                    _now_ms(),
+                    int(limits.grace_seconds * 1000),
                     self._session_prefix(room),
+                    int(limits.capacity),
+                    repr(float(limits.rate_per_second)),
+                    int(limits.burst),
                 ],
             )
         except _redis_errors() as exc:
             raise BackendUnavailableError(str(exc)) from exc
-
-        out: list[Session] = []
-        for raw in sids:
-            sid = raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else str(raw)
-            session = self.get_session(room, sid)
-            if session is not None:
-                session.state = SessionState.ADMITTED
-                out.append(session)
-        return out
+        return [_decode(raw) for raw in sids]
 
     def remove(self, room: str, session_id: str) -> bool:
         try:
@@ -285,12 +287,14 @@ class RedisStorageBackend(StorageBackend):
             return False
 
 
+def _decode(raw: bytes | str) -> str:
+    return raw.decode("utf-8") if isinstance(raw, (bytes, bytearray)) else str(raw)
+
+
 def _decode_hash(raw: Mapping[bytes | str, bytes | str]) -> dict[str, str]:
     out: dict[str, str] = {}
     for k, v in raw.items():
-        key = k.decode("utf-8") if isinstance(k, (bytes, bytearray)) else str(k)
-        val = v.decode("utf-8") if isinstance(v, (bytes, bytearray)) else str(v)
-        out[key] = val
+        out[_decode(k)] = _decode(v)
     return out
 
 

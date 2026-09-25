@@ -100,3 +100,44 @@ def test_allowlist_check(make_room) -> None:
     room.config.allowlist_ips = ("10.0.0.1",)  # type: ignore[misc]
     assert room.is_allowlisted(ip="10.0.0.1", user_id=None) is True
     assert room.is_allowlisted(ip="9.9.9.9", user_id=None) is False
+
+
+def test_capacity_aware_policy_uses_its_own_capacity(redis_client, secret) -> None:
+    from waiting_room.core.engine import WaitingRoom
+    from waiting_room.core.settings import AdmissionPolicy, WaitingRoomConfig
+
+    cfg = WaitingRoomConfig(
+        name="cap",
+        secret_key=secret,
+        target_url="/x",
+        capacity=100,
+        policy=AdmissionPolicy.capacity_aware(capacity=2),
+        rate_limit_per_ip_per_minute=1_000_000,
+    )
+    room = WaitingRoom(cfg, redis_client=redis_client)
+    assert room.effective_capacity == 2
+    sids = [room.enqueue(ip=f"10.0.0.{i}", user_agent="ua")[0].session_id for i in range(4)]
+    admitted = [sid for sid in sids if room.try_admit(sid) is not None]
+    assert len(admitted) == 2
+
+
+def test_rate_is_shared_between_engine_instances(make_room) -> None:
+    first = make_room(admit_per_second=1, capacity=0)
+    second = make_room(admit_per_second=1, capacity=0)
+    s1, _ = first.enqueue(ip="1.1.1.1", user_agent="ua")
+    s2, _ = second.enqueue(ip="2.2.2.2", user_agent="ua")
+    results = [first.try_admit(s1.session_id), second.try_admit(s2.session_id)]
+    assert sum(r is not None for r in results) == 1
+
+
+def test_custom_strategy_narrows_admissions(make_room) -> None:
+    from waiting_room.core.interfaces import AdmissionStrategy
+
+    class _Nobody(AdmissionStrategy):
+        def slots_available(self, *, queue_size: int, admitted: int, capacity: int) -> int:
+            return 0
+
+    room = make_room()
+    room._strategy = _Nobody()
+    s, _ = room.enqueue(ip="1.1.1.1", user_agent="ua")
+    assert room.try_admit(s.session_id) is None

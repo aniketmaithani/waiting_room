@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from waiting_room.core._types import (
+        AdmissionLimits,
         AdmissionTicket,
         EventType,
         QueuePosition,
@@ -41,8 +42,14 @@ class StorageBackend(ABC):
         """Number of sessions currently queued."""
 
     @abstractmethod
-    def admit_batch(self, room: str, n: int) -> list[Session]:
-        """Atomically pop the ``n`` highest-priority sessions and mark admitted."""
+    def admit_batch(self, room: str, n: int, *, limits: AdmissionLimits) -> list[str]:
+        """Atomically admit up to ``n`` sessions from the front of the queue.
+
+        Implementations must, in one atomic step: free admission slots whose
+        deadline has passed, admit nobody while the kill switch is engaged, and
+        never exceed ``limits.capacity`` or ``limits.rate_per_second`` no matter
+        how many processes tick concurrently. Returns the admitted session ids.
+        """
 
     @abstractmethod
     def remove(self, room: str, session_id: str) -> bool:

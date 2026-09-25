@@ -21,6 +21,7 @@ class SessionState(enum.StrEnum):
     ADMITTED = "admitted"
     EXPIRED = "expired"
     REJECTED = "rejected"
+    RELEASED = "released"
 
 
 class EventType(enum.StrEnum):
@@ -74,6 +75,20 @@ class AdmissionTicket:
     @property
     def ttl_seconds(self) -> float:
         return max(0.0, self.expires_at - _now())
+
+
+@dataclass(slots=True, frozen=True)
+class AdmissionLimits:
+    """Limits the storage backend enforces atomically on every admission tick."""
+
+    capacity: int = 0
+    """Maximum concurrently admitted sessions. ``0`` means unlimited."""
+    rate_per_second: float = 0.0
+    """Sustained admissions per second across all processes. ``0`` means unlimited."""
+    burst: int = 0
+    """Token-bucket size: admissions allowed in one go after an idle period."""
+    grace_seconds: int = 60
+    """How long an admitted session holds its slot before it must redeem."""
 
 
 @dataclass(slots=True, frozen=True)
