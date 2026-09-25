@@ -63,12 +63,8 @@ def waiting_page(request: HttpRequest) -> HttpResponse:
             "position": snap.position,
             "queue_size": snap.queue_size,
             "estimated_wait_seconds": snap.estimated_wait_seconds,
-            "stream_url": (
-                f"{room.config.position_stream_path}?sid={sid}&room={room.config.name}"
-            ),
-            "admit_url": (
-                f"{room.config.admit_callback_path}?sid={sid}&room={room.config.name}"
-            ),
+            "stream_url": (f"{room.config.position_stream_path}?sid={sid}&room={room.config.name}"),
+            "admit_url": (f"{room.config.admit_callback_path}?sid={sid}&room={room.config.name}"),
         },
     )
 
@@ -169,5 +165,3 @@ def redirect_to_target(request: HttpRequest) -> HttpResponse:
     """Used in tests/examples — redirect a fully-admitted user to ``target_url``."""
     room = _resolve_room(request)
     return HttpResponseRedirect(room.config.target_url)
-
-

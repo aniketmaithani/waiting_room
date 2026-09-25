@@ -185,5 +185,3 @@ def attach_admission_cookie(
         samesite=room.config.cookie_samesite,
     )
     return response
-
-

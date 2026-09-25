@@ -17,8 +17,7 @@ class Command(BaseCommand):
             return
 
         header = (
-            f"{'ROOM':<24} {'QUEUE':>8} {'ADMITTED':>10} "
-            f"{'CAPACITY':>10} {'KILL?':>6} {'OK?':>5}"
+            f"{'ROOM':<24} {'QUEUE':>8} {'ADMITTED':>10} {'CAPACITY':>10} {'KILL?':>6} {'OK?':>5}"
         )
         self.stdout.write(header)
         self.stdout.write("-" * len(header))

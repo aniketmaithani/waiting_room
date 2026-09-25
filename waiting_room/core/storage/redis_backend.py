@@ -91,12 +91,18 @@ class RedisStorageBackend(StorageBackend):
     def enqueue(self, room: str, session: Session, score: float) -> int:
         fp = session.fingerprint or Fingerprint("", "")
         hash_args: list[str] = [
-            "session_id", session.session_id,
-            "state", session.state.value,
-            "ip", fp.ip,
-            "ua", fp.user_agent_hash,
-            "enqueued_at", str(session.enqueued_at),
-            "user_id", session.user_id or "",
+            "session_id",
+            session.session_id,
+            "state",
+            session.state.value,
+            "ip",
+            fp.ip,
+            "ua",
+            fp.user_agent_hash,
+            "enqueued_at",
+            str(session.enqueued_at),
+            "user_id",
+            session.user_id or "",
         ]
         try:
             # Score is a float (seconds since epoch) so sub-ms enqueues preserve order.

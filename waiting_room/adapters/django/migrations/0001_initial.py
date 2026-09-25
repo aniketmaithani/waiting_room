@@ -40,9 +40,7 @@ class Migration(migrations.Migration):
                 ),
                 (
                     "session_id",
-                    models.CharField(
-                        blank=True, db_index=True, default="", max_length=64
-                    ),
+                    models.CharField(blank=True, db_index=True, default="", max_length=64),
                 ),
                 ("ip", models.GenericIPAddressField(blank=True, null=True)),
                 ("user_id", models.CharField(blank=True, default="", max_length=64)),
@@ -54,9 +52,7 @@ class Migration(migrations.Migration):
             options={
                 "ordering": ("-created_at",),
                 "indexes": [
-                    models.Index(
-                        fields=["room", "created_at"], name="wr_event_room_created"
-                    ),
+                    models.Index(fields=["room", "created_at"], name="wr_event_room_created"),
                     models.Index(
                         fields=["event_type", "created_at"],
                         name="wr_event_type_created",
