@@ -59,7 +59,8 @@ class PrometheusMetrics(MetricsRecorder):  # pragma: no cover - import-guarded
         with self._lock:
             collector = self._collectors.get(full_name)
             if collector is None:
-                collector = kind(full_name, f"{self._ns} {name}", label_keys)
+                factory: Any = kind  # prometheus_client is untyped
+                collector = factory(full_name, f"{self._ns} {name}", label_keys)
                 self._collectors[full_name] = collector
         if not isinstance(collector, kind):
             msg = f"metric {full_name!r} already registered as {type(collector).__name__}"

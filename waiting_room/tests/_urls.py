@@ -9,12 +9,12 @@ from django.urls import include, path
 from waiting_room.adapters.django.decorators import waiting_room_protect
 
 
-def _checkout(_request):  # type: ignore[no-untyped-def]
+def _checkout(_request):
     return HttpResponse(b"OK")
 
 
 @waiting_room_protect("default")
-def _decorated(_request):  # type: ignore[no-untyped-def]
+def _decorated(_request):
     return HttpResponse(b"DECORATED")
 
 

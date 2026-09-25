@@ -162,7 +162,7 @@ class WaitingRoom:
         )
         self._rate_limiter: RateLimiter = rate_limiter or (
             RedisRateLimiter(
-                client,  # type: ignore[arg-type]
+                client,
                 limit=config.rate_limit_per_ip_per_minute,
                 window_seconds=60,
                 key_prefix=f"{config.storage.key_prefix}:{{{config.name}}}:rl",

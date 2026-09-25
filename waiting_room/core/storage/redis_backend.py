@@ -248,10 +248,8 @@ class RedisStorageBackend(StorageBackend):
         if not fields:
             return
         try:
-            self._client.hset(
-                self._session_key(room, session_id),
-                mapping=dict(fields),
-            )
+            mapping: dict[Any, Any] = dict(fields)
+            self._client.hset(self._session_key(room, session_id), mapping=mapping)
         except _redis_errors() as exc:
             raise BackendUnavailableError(str(exc)) from exc
 

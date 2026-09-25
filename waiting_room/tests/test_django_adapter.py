@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from waiting_room.core.interfaces import RateLimiter
+
 if TYPE_CHECKING:
     from django.test import Client
 
@@ -76,7 +78,7 @@ def test_rate_limited_client_gets_429(wired_room: WaitingRoom, client: Client) -
     assert r.status_code == 429
 
 
-class _Deny:
+class _Deny(RateLimiter):
     def acquire(self, key: str) -> bool:
         return False
 
@@ -154,26 +156,33 @@ def test_release_admission_frees_slot(wired_room: WaitingRoom, client: Client) -
     assert response.cookies["wr_session_pass"].value == ""
 
 
-def _break_backend(room: WaitingRoom) -> None:
+def _break_backend(room: WaitingRoom, monkeypatch: pytest.MonkeyPatch) -> None:
     from waiting_room.core.exceptions import BackendUnavailableError
 
     def _down(*_args: object, **_kwargs: object) -> None:
         raise BackendUnavailableError
 
-    room._storage.enqueue = _down
-    room._rate_limiter.acquire = lambda key: True
+    monkeypatch.setattr(room._storage, "enqueue", _down)
 
 
-def test_backend_down_fails_closed_by_default(wired_room: WaitingRoom, client: Client) -> None:
-    _break_backend(wired_room)
+def test_backend_down_fails_closed_by_default(
+    wired_room: WaitingRoom,
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _break_backend(wired_room, monkeypatch)
     assert client.get("/checkout/").status_code == 503
 
 
-def test_backend_down_fails_open_when_configured(wired_room: WaitingRoom, client: Client) -> None:
+def test_backend_down_fails_open_when_configured(
+    wired_room: WaitingRoom,
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from waiting_room.core.settings import FailureMode
 
     wired_room.config.failure_mode = FailureMode.FAIL_OPEN
-    _break_backend(wired_room)
+    _break_backend(wired_room, monkeypatch)
     r = client.get("/checkout/")
     assert r.status_code == 200
     assert r.content == b"OK"
@@ -181,7 +190,7 @@ def test_backend_down_fails_open_when_configured(wired_room: WaitingRoom, client
 
 def _sid(client: Client, room: WaitingRoom) -> str:
     client.get("/checkout/")
-    return client.cookies[room.config.session_cookie_name].value
+    return str(client.cookies[room.config.session_cookie_name].value)
 
 
 @pytest.mark.parametrize(

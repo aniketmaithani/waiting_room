@@ -120,6 +120,21 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 ignore_missing_imports = true
 
+# Django ships without type information (no django-stubs dependency), so its
+# base classes and decorators are ``Any``. Relax only the checks that trips.
+[[tool.mypy.overrides]]
+module = "waiting_room.adapters.django.*"
+disallow_subclassing_any = false
+disallow_untyped_decorators = false
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = "waiting_room.adapters.django.migrations.*"
+ignore_errors = true
+
 [[tool.mypy.overrides]]
 module = "waiting_room.tests.*"
 disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_decorators = false
+disallow_subclassing_any = false

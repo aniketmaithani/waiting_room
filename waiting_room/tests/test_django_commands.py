@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from io import StringIO
 
 import pytest
@@ -19,7 +20,7 @@ from waiting_room.core.settings import (
 
 
 @pytest.fixture
-def cmd_room(redis_client: redis.Redis) -> WaitingRoom:
+def cmd_room(redis_client: redis.Redis) -> Iterator[WaitingRoom]:
     cfg = WaitingRoomConfig(
         name="cmd",
         secret_key="x" * 64,

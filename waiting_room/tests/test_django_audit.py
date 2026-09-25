@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 import redis
 
@@ -18,7 +20,7 @@ from waiting_room.core.settings import (
 
 
 @pytest.fixture
-def audit_room(redis_client: redis.Redis) -> WaitingRoom:
+def audit_room(redis_client: redis.Redis) -> Iterator[WaitingRoom]:
     cfg = WaitingRoomConfig(
         name="audit",
         secret_key="x" * 64,

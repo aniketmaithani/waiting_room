@@ -10,7 +10,7 @@ Two integration paths:
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING
 
 from django.conf import settings
@@ -37,7 +37,7 @@ def _audit_enabled() -> bool:
     return bool(raw.get("AUDIT_LOG"))
 
 
-def make_handler(room_name: str):
+def make_handler(room_name: str) -> Callable[[EventType, Mapping[str, object]], None]:
     """Build a handler closure suitable for ``room.emitter.subscribe``."""
 
     def handler(event: EventType, payload: Mapping[str, object]) -> None:
@@ -76,9 +76,11 @@ def make_handler(room_name: str):
 
 
 def _safe_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
     try:
-        return int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+        return int(value)
+    except ValueError:
         return None
 
 

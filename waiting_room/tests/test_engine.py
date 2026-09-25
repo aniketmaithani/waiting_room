@@ -83,7 +83,7 @@ def test_release_frees_a_slot(make_room) -> None:
 
 def test_emitter_fires_lifecycle_events(make_room) -> None:
     room = make_room(admit_per_second=100, capacity=10)
-    received: list[tuple] = []
+    received: list[tuple[object, dict[str, object]]] = []
     emitter = room.emitter
     assert isinstance(emitter, InProcessEventEmitter)
     emitter.subscribe(lambda et, payload: received.append((et, dict(payload))))
@@ -97,7 +97,7 @@ def test_emitter_fires_lifecycle_events(make_room) -> None:
 
 def test_allowlist_check(make_room) -> None:
     room = make_room()
-    room.config.allowlist_ips = ("10.0.0.1",)  # type: ignore[misc]
+    room.config.allowlist_ips = ("10.0.0.1",)
     assert room.is_allowlisted(ip="10.0.0.1", user_id=None) is True
     assert room.is_allowlisted(ip="9.9.9.9", user_id=None) is False
 
@@ -285,7 +285,8 @@ def test_status_polling_ticks_are_throttled(make_room) -> None:
 
     def _counting(*args: object, **kwargs: object) -> list[str]:
         calls.append(1)
-        return original(*args, **kwargs)
+        result: list[str] = original(*args, **kwargs)
+        return result
 
     room._storage.admit_batch = _counting
     s, _ = room.enqueue(ip="1.2.3.4", user_agent="ua")
