@@ -210,3 +210,51 @@ def test_backend_down_fails_open_when_configured(wired_room: WaitingRoom, client
     r = client.get("/checkout/")
     assert r.status_code == 200
     assert r.content == b"OK"
+
+
+def _sid(client: Client, room: WaitingRoom) -> str:
+    client.get("/checkout/")
+    return client.cookies[room.config.session_cookie_name].value
+
+
+@pytest.mark.parametrize(
+    "evil",
+    ["javascript:alert(1)", "//evil.example/", "https://evil.example/", "/\\evil.example"],
+)
+def test_admit_rejects_unsafe_next(wired_room: WaitingRoom, client: Client, evil: str) -> None:
+    sid = _sid(client, wired_room)
+    client.get(f"/_waiting-room/status?sid={sid}&room=default")
+    r = client.post(f"/_waiting-room/admit?sid={sid}&room=default", {"next": evil})
+    assert r.json()["redirect"] == "/checkout/"
+
+
+def test_admit_keeps_safe_next(wired_room: WaitingRoom, client: Client) -> None:
+    sid = _sid(client, wired_room)
+    r = client.post(f"/_waiting-room/admit?sid={sid}&room=default", {"next": "/checkout/?item=7"})
+    assert r.json()["redirect"] == "/checkout/?item=7"
+
+
+def test_waiting_page_escapes_unsafe_next(wired_room: WaitingRoom, client: Client) -> None:
+    sid = _sid(client, wired_room)
+    r = client.get(f"/_waiting-room/?sid={sid}&room=default&next=javascript:alert(1)")
+    assert r.status_code == 200
+    assert b"javascript:" not in r.content
+
+
+def test_admit_requires_the_session_cookie(wired_room: WaitingRoom, client: Client) -> None:
+    from django.test import Client as DjangoClient
+
+    sid = _sid(client, wired_room)
+    r = DjangoClient().post(f"/_waiting-room/admit?sid={sid}&room=default")
+    assert r.status_code == 403
+
+
+def test_unknown_room_is_404(wired_room: WaitingRoom, client: Client) -> None:
+    sid = "a" * 32
+    assert client.get(f"/_waiting-room/?sid={sid}&room=nope").status_code == 404
+    assert client.get(f"/_waiting-room/status?sid={sid}&room=nope").status_code == 404
+
+
+def test_malformed_sid_is_400(wired_room: WaitingRoom, client: Client) -> None:
+    assert client.get("/_waiting-room/status?sid=../../x&room=default").status_code == 400
+    assert client.get("/_waiting-room/?sid=&room=default").status_code == 400
